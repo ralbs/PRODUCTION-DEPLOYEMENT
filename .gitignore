@@ -1,0 +1,21 @@
+# --- backend (Node) ---
+backend/node_modules/
+backend/.env
+backend/npm-debug.log*
+backend/backend_out.txt
+
+# --- frontend (Vite) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/frontend_out.txt
+
+# --- firmware (Arduino/PlatformIO) ---
+firmware/build/
+firmware/.pio/
+firmware/*.bin
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+*.swp

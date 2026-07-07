@@ -1,0 +1,102 @@
+const { gql } = require("apollo-server-express");
+const Telemetry = require("../models/Telemetry");
+
+const typeDefs = gql`
+  type Location {
+    lat: Float
+    lon: Float
+  }
+  type Weather {
+    temperature: Float
+    humidity: Float
+    pressure: Float
+  }
+  type Pollutants {
+    pm1: Float
+    pm2_5: Float
+    pm10: Float
+    co: Float
+    co2: Float
+    no2: Float
+    o3: Float
+  }
+  type Battery {
+    voltage: Float
+    percent: Float
+  }
+  type Health {
+    mq135: String
+    pms5003: String
+    dht22: String
+  }
+  type Flags {
+    offline_buffered: Boolean
+    delayed: Boolean
+  }
+
+  type Reading {
+    id: ID!
+    timestamp: String!
+    device_id: String!
+    station_id: String!
+    location: Location
+    weather: Weather
+    pollutants: Pollutants
+    battery: Battery
+    health: Health
+    flags: Flags
+  }
+
+  type Query {
+    latestReading(stationId: String!): Reading
+    history(stationId: String!, from: String, to: String, limit: Int = 500): [Reading!]!
+    stations: [String!]!
+  }
+`;
+
+function toReading(doc) {
+  return {
+    id: doc._id.toString(),
+    timestamp: doc.timestamp.toISOString(),
+    device_id: doc.meta.device_id,
+    station_id: doc.meta.station_id,
+    location: doc.location,
+    weather: doc.weather,
+    pollutants: doc.pollutants,
+    battery: doc.battery,
+    health: doc.health,
+    flags: doc.flags,
+  };
+}
+
+const resolvers = {
+  Query: {
+    latestReading: async (_, { stationId }) => {
+      const doc = await Telemetry.findOne({ "meta.station_id": stationId })
+        .sort({ timestamp: -1 })
+        .lean();
+      return doc ? toReading(doc) : null;
+    },
+
+    history: async (_, { stationId, from, to, limit }) => {
+      const query = { "meta.station_id": stationId };
+      if (from || to) {
+        query.timestamp = {};
+        if (from) query.timestamp.$gte = new Date(from);
+        if (to) query.timestamp.$lte = new Date(to);
+      }
+      const docs = await Telemetry.find(query)
+        .sort({ timestamp: -1 })
+        .limit(Math.min(limit, 5000))
+        .lean();
+      return docs.map(toReading);
+    },
+
+    stations: async () => {
+      const ids = await Telemetry.distinct("meta.station_id");
+      return ids;
+    },
+  },
+};
+
+module.exports = { typeDefs, resolvers };

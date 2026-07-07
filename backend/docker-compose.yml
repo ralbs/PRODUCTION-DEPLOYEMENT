@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: aqms-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - aqms_mongo_data:/data/db
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    # Time-series collections need MongoDB 5+, and a single-node replica set
+    # is the simplest way to get one running locally. Initialize once with:
+    #   docker exec -it aqms-mongo mongosh --eval "rs.initiate()"
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: aqms-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+volumes:
+  aqms_mongo_data:

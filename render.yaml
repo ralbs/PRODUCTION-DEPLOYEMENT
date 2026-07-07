@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: aqms-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: MONGO_URI
+        sync: false        # set to your MongoDB Atlas connection string
+      - key: DEVICE_KEYS
+        sync: false        # e.g. ESP32-001:your-long-random-key
+      - key: ALLOWED_ORIGINS
+        sync: false        # e.g. https://your-dashboard.example.com
+      - key: MQTT_BROKER_URL
+        sync: false        # leave unset to disable MQTT republish
+      - key: MQTT_USERNAME
+        sync: false
+      - key: MQTT_PASSWORD
+        sync: false
