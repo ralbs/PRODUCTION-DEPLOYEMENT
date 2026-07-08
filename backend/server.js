@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
-const rateLimit = require("express-rate-limit");
 const { ApolloServer } = require("apollo-server-express");
 
 const { connectDB } = require("./config/db");
@@ -20,17 +19,6 @@ async function main() {
 
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").filter(Boolean);
   app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : "*" }));
-
-  // Device ingest gets its own, tighter rate limit — one station posting
-  // every minute is nowhere near this ceiling, but it blocks a compromised
-  // or misbehaving device from hammering the DB.
-  const ingestLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  app.use("/api/telemetry", ingestLimiter);
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 

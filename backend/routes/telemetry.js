@@ -1,10 +1,22 @@
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const Telemetry = require("../models/Telemetry");
 const { authenticateDevice } = require("../middleware/auth");
 const { calculateAQI } = require("../lib/aqi");
 const { forwardToThingSpeak } = require("../lib/thingspeak");
 
 const router = express.Router();
+
+// Device ingest gets its own, tighter rate limit — one station posting every
+// minute is nowhere near this ceiling, but it blocks a compromised or
+// misbehaving device from hammering the DB. Scoped to POST only so it never
+// throttles the dashboard's GET /latest and GET /history reads.
+const ingestLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Fields required in every payload — mirrors the ESP32 firmware's JSON schema.
 const REQUIRED_TOP = ["device_id", "station_id", "timestamp", "pollutants"];
@@ -24,7 +36,7 @@ function validatePayload(body) {
 // -------------------------------------------------------------------
 // POST /api/telemetry — called by the ESP32 station
 // -------------------------------------------------------------------
-router.post("/", authenticateDevice, async (req, res) => {
+router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
   const body = req.body;
 
   const validationError = validatePayload(body);

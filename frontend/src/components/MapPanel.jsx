@@ -1,5 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
+import { idwInterpolate } from "../lib/idw";
+import { aqiToRgb } from "../lib/aqiColor";
+
+// IDW dispersion layer tuning — see drawHeatmap() below.
+const HEAT_CELL_PX  = 8;    // grid resolution (larger = faster, blockier)
+const HEAT_MAX_ALPHA = 0.5; // opacity directly over a station
+const HEAT_DECAY_KM  = 6;   // how far the glow/interpolation extends before fading
 
 const AQI_COLORS = {
   Good: "#22c55e",
@@ -18,6 +25,66 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
   const containerRef = useRef(null);
   const mapRef      = useRef(null);
   const markersRef  = useRef({});
+  const heatCanvasRef = useRef(null);
+  const dataRef       = useRef({ stations: [], stationsAQI: {} });
+
+  dataRef.current = { stations, stationsAQI };
+
+  // Spatial dispersion around each station, IDW-interpolated in between.
+  // Draws directly onto the heatmap canvas — cheap enough to redraw on every
+  // pan/zoom/data update since there are only a handful of stations.
+  const drawHeatmap = useCallback(() => {
+    const map = mapRef.current;
+    const canvas = heatCanvasRef.current;
+    if (!map || !canvas) return;
+
+    const { stations, stationsAQI } = dataRef.current;
+    const points = stations
+      .filter((s) => s.location?.lat != null && stationsAQI?.[s.station_id]?.aqi != null)
+      .map((s) => ({
+        lat: s.location.lat,
+        lon: s.location.lon,
+        value: stationsAQI[s.station_id].aqi,
+      }));
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!points.length) return;
+
+    for (let px = 0; px < canvas.width; px += HEAT_CELL_PX) {
+      for (let py = 0; py < canvas.height; py += HEAT_CELL_PX) {
+        const { lat, lng } = map.containerPointToLatLng([px + HEAT_CELL_PX / 2, py + HEAT_CELL_PX / 2]);
+        const result = idwInterpolate(points, lat, lng);
+        if (!result) continue;
+
+        const alpha = HEAT_MAX_ALPHA * Math.exp(-result.minDist / HEAT_DECAY_KM);
+        if (alpha < 0.02) continue;
+
+        const rgb = aqiToRgb(result.value);
+        if (!rgb) continue;
+
+        ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha.toFixed(3)})`;
+        ctx.fillRect(px, py, HEAT_CELL_PX, HEAT_CELL_PX);
+      }
+    }
+  }, []);
+
+  // Resize/reposition the heatmap canvas to match the current viewport, then
+  // redraw. Panes are children of Leaflet's transformed map root, so the
+  // canvas has to be re-pinned to the container's top-left on every
+  // move/zoom or its content drifts out of alignment with the basemap.
+  const resetHeatmap = useCallback(() => {
+    const map = mapRef.current;
+    const canvas = heatCanvasRef.current;
+    if (!map || !canvas) return;
+
+    const size = map.getSize();
+    canvas.width = size.x;
+    canvas.height = size.y;
+    L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+
+    drawHeatmap();
+  }, [drawHeatmap]);
 
   // Initialise map once
   useEffect(() => {
@@ -41,14 +108,27 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
       .addAttribution('<span style="color:#3d5078;font-size:9px">© OSM · CARTO</span>')
       .addTo(map);
 
+    // Dispersion layer — sits above the basemap, below the station markers
+    // (which render as circleMarkers in the default overlayPane, z-index 400).
+    map.createPane("idwPane");
+    map.getPane("idwPane").style.zIndex = 350;
+    map.getPane("idwPane").style.pointerEvents = "none";
+    const heatCanvas = L.DomUtil.create("canvas", "idw-heatmap-canvas", map.getPane("idwPane"));
+    heatCanvasRef.current = heatCanvas;
+
+    map.on("moveend zoomend resize", resetHeatmap);
+
     mapRef.current = map;
+    resetHeatmap();
 
     return () => {
+      map.off("moveend zoomend resize", resetHeatmap);
       map.remove();
       mapRef.current = null;
       markersRef.current = {};
+      heatCanvasRef.current = null;
     };
-  }, []);
+  }, [resetHeatmap]);
 
   // Redraw markers whenever data changes
   useEffect(() => {
@@ -97,7 +177,9 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
       marker.addTo(map);
       markersRef.current[s.station_id] = marker;
     });
-  }, [stations, stationsAQI, selectedStation, onSelect]);
+
+    drawHeatmap();
+  }, [stations, stationsAQI, selectedStation, onSelect, drawHeatmap]);
 
   return (
     <div className="map-section">
