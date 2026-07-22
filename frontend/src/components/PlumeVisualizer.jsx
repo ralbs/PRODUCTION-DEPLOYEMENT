@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { api } from "../api";
 
 // Jet colormap t∈[0,1] → [r,g,b]
@@ -11,26 +11,24 @@ function jet(t) {
   ];
 }
 
-const STABILITY_CLASSES = ["A", "B", "C", "D", "E", "F"];
 const STABILITY_LABELS = {
-  A: "A — Very Unstable",
-  B: "B — Unstable",
-  C: "C — Slightly Unstable",
-  D: "D — Neutral",
-  E: "E — Slightly Stable",
-  F: "F — Stable",
+  A: "Very Unstable — strong daytime sun, light wind",
+  B: "Unstable — moderate sun, light wind",
+  C: "Slightly Unstable — overcast day or moderate wind",
+  D: "Neutral — cloudy day or strong wind",
+  E: "Slightly Stable — clear night, moderate wind",
+  F: "Stable — clear night, light wind",
 };
 
 function drawGrid(canvas, legendCanvas, data) {
   const { grid, gridMeta, maxC_ugm3, cls, windDir } = data;
   const { xSteps, ySteps, maxDist, halfY } = gridMeta;
 
-  const W = (canvas.width  = canvas.offsetWidth  || 620);
+  const W = (canvas.width = canvas.offsetWidth || 620);
   const H = (canvas.height = canvas.offsetHeight || 320);
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
 
-  // Dark background
   ctx.fillStyle = "#060912";
   ctx.fillRect(0, 0, W, H);
 
@@ -38,9 +36,8 @@ function drawGrid(canvas, legendCanvas, data) {
   const cellH = H / (ySteps + 1);
   const imgData = ctx.createImageData(W, H);
 
-  // Paint each backend-computed cell
   for (const { i, j, t } of grid) {
-    const [r, g, b] = jet(Math.sqrt(t)); // gamma-correct for perceptual uniformity
+    const [r, g, b] = jet(Math.sqrt(t));
     const alpha = Math.round(t * 210 + 45);
     const px = Math.round(i * cellW);
     const py = Math.round(j * cellH);
@@ -84,7 +81,7 @@ function drawGrid(canvas, legendCanvas, data) {
   ctx.fillStyle = "rgba(212,224,248,0.9)";
   ctx.font = "11px 'JetBrains Mono', monospace";
   ctx.fillText(`Peak: ${maxC_ugm3.toFixed(1)} µg/m³`, 12, 18);
-  ctx.fillText(`Class: ${cls}`, 12, 33);
+  ctx.fillText(`Stability: ${cls}`, 12, 33);
 
   // Legend bar
   if (legendCanvas) {
@@ -108,7 +105,7 @@ function drawGrid(canvas, legendCanvas, data) {
   }
 }
 
-export default function PlumeVisualizer() {
+export default function PlumeVisualizer({ latest }) {
   const canvasRef = useRef(null);
   const legendRef = useRef(null);
 
@@ -116,175 +113,165 @@ export default function PlumeVisualizer() {
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
 
-  const [form, setForm] = useState({
-    Q: 5, u: 3, H: 20,
-    stabilityClass: "",
-    isDaytime: true,
-    windDir: 270,
-    maxDistance: 5000,
-  });
+  // Auto-derive parameters from sensor data
+  const params = useMemo(() => {
+    const pollutants = latest?.pollutants || {};
+    const weather = latest?.weather || {};
 
-  function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+    const pm25 = pollutants.pm2_5 || 0;
+    const windSpeed = weather.windSpeed || 3; // default Bangalore urban
+    const isDaytime = (() => {
+      const h = new Date().getHours();
+      return h >= 6 && h < 18;
+    })();
 
-  // Draw whenever a new result lands (after React has committed the canvas to DOM)
+    // Estimate emission rate from PM2.5 (heuristic for urban area)
+    // Higher PM2.5 → higher implied nearby source strength
+    const Q = Math.max(0.5, pm25 * 0.002);
+
+    // Source height: typical urban ground-level + traffic mix
+    const H = 15;
+
+    // Max distance: scale with wind speed
+    const maxDistance = Math.min(10000, Math.max(3000, windSpeed * 2000));
+
+    // Wind direction: use 270° (W) as default for Bangalore
+    const windDir = 270;
+
+    return { Q: +Q.toFixed(3), u: windSpeed, H, isDaytime, windDir, maxDistance };
+  }, [latest?.pollutants, latest?.weather]);
+
+  // Auto-calculate whenever params change
+  useEffect(() => {
+    if (!latest?.pollutants) return;
+
+    let cancelled = false;
+    async function run() {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await api.estimatePlume({
+          Q:              params.Q,
+          u:              params.u,
+          H:              params.H,
+          isDaytime:      params.isDaytime,
+          windDir:        params.windDir,
+          maxDistance:    params.maxDistance,
+          grid:           true,
+          xSteps:         80,
+          ySteps:         60,
+        });
+        if (!cancelled) setResult(data);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [latest?.pollutants, latest?.weather, params]);
+
+  // Draw whenever result changes
   useEffect(() => {
     if (!result?.grid || !canvasRef.current) return;
     drawGrid(canvasRef.current, legendRef.current, result);
   }, [result]);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const data = await api.estimatePlume({
-        Q:              Number(form.Q),
-        u:              Number(form.u),
-        H:              Number(form.H),
-        stabilityClass: form.stabilityClass || undefined,
-        isDaytime:      form.isDaytime,
-        windDir:        Number(form.windDir),
-        maxDistance:    Number(form.maxDistance),
-        grid:           true,
-        xSteps:         80,
-        ySteps:         60,
-      });
-
-      setResult(data);  // triggers useEffect → drawGrid after DOM commit
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const pm25 = latest?.pollutants?.pm2_5;
+  const wind = latest?.weather?.windSpeed;
 
   return (
-    <div className="plume-band">
-      {/* ── Form ── */}
-      <div className="plume-form-section">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
-          </svg>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Gaussian Plume Dispersion Model</span>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minHeight: 380 }}>
+      {/* ── Left: Explanation + Parameters ── */}
+      <div style={{
+        padding: "22px 24px", borderRight: "1px solid var(--border)",
+        display: "flex", flexDirection: "column", gap: 14,
+      }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>
+            How Pollution Spreads in the Air
+          </div>
+          <p style={{ fontSize: 11, color: "var(--text-sub)", lineHeight: 1.7 }}>
+            This model shows how pollutants from nearby sources (traffic, construction, industry)
+            travel and spread downwind. The <strong style={{ color: "var(--text)" }}>brighter the area</strong>,
+            the higher the pollutant concentration at that spot.
+          </p>
         </div>
-        <p style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4, lineHeight: 1.6 }}>
-          Screening-level Pasquill-Gifford dispersion (Briggs rural σ coefficients).
-          Concentration in µg/m³ at ground level (z=0).
-        </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="field-row">
-            <div className="field-group">
-              <label className="field-label">Emission Rate Q (g/s)</label>
-              <input className="field-input" type="number" step="any" min="0.01" value={form.Q}
-                onChange={(e) => set("Q", e.target.value)} required />
-            </div>
-            <div className="field-group">
-              <label className="field-label">Wind Speed u (m/s)</label>
-              <input className="field-input" type="number" step="any" min="0.1" value={form.u}
-                onChange={(e) => set("u", e.target.value)} required />
-            </div>
+        {/* Auto-derived parameters */}
+        <div style={{
+          padding: "12px 14px", borderRadius: 10,
+          background: "rgba(0,229,160,0.05)", border: "1px solid rgba(0,229,160,0.12)",
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--accent)", marginBottom: 8 }}>
+            Auto-Calculated from Live Data
           </div>
-
-          <div className="field-row">
-            <div className="field-group">
-              <label className="field-label">Source Height H (m)</label>
-              <input className="field-input" type="number" step="any" min="0" value={form.H}
-                onChange={(e) => set("H", e.target.value)} required />
-            </div>
-            <div className="field-group">
-              <label className="field-label">Wind Direction (°)</label>
-              <input className="field-input" type="number" min="0" max="359" value={form.windDir}
-                onChange={(e) => set("windDir", e.target.value)} />
-            </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <ParamItem label="Wind Speed" value={`${params.u} m/s`} sub={wind ? "From sensor" : "Default (no sensor)"} />
+            <ParamItem label="Source Height" value={`${params.H} m`} sub="Urban average" />
+            <ParamItem label="Emission Rate" value={`${params.Q} g/s`} sub={`From PM2.5: ${pm25 ?? "–"} µg/m³`} />
+            <ParamItem label="Time of Day" value={params.isDaytime ? "Daytime" : "Night"} sub="Affects air stability" />
           </div>
+        </div>
 
-          <div className="field-group">
-            <label className="field-label">Stability Class</label>
-            <select className="field-select" value={form.stabilityClass}
-              onChange={(e) => set("stabilityClass", e.target.value)}>
-              <option value="">Auto (from wind + time of day)</option>
-              {STABILITY_CLASSES.map((c) => (
-                <option key={c} value={c}>{STABILITY_LABELS[c]}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field-row">
-            <div className="field-group">
-              <label className="field-label">Max Distance (m)</label>
-              <input className="field-input" type="number" min="500" max="50000" step="500"
-                value={form.maxDistance} onChange={(e) => set("maxDistance", e.target.value)} />
+        {/* What this means */}
+        {result && (
+          <div style={{
+            padding: "10px 14px", borderRadius: 10,
+            background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)",
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>
+              What This Means
             </div>
-            <div className="field-group" style={{ justifyContent: "flex-end" }}>
-              <label className="field-label">Time of Day</label>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                {["Daytime", "Night"].map((v) => (
-                  <label key={v} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, cursor: "pointer", color: "var(--text-sub)" }}>
-                    <input type="radio" name="daytime"
-                      checked={form.isDaytime === (v === "Daytime")}
-                      onChange={() => set("isDaytime", v === "Daytime")} />
-                    {v}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <button type="submit" className="submit-btn" disabled={loading}>
-            {loading ? "Computing…" : "Compute Dispersion"}
-          </button>
-        </form>
-
-        {error && (
-          <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6,
-            background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
-            fontSize: 11, color: "#ef4444" }}>
-            {error}
+            <p style={{ fontSize: 11, color: "var(--text-sub)", lineHeight: 1.7, margin: 0 }}>
+              Peak pollution of <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
+                {result.maxC_ugm3.toFixed(1)} µg/m³</strong> is expected{" "}
+              <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
+                {result.peakX_m}m</strong> downwind.
+              {" "}{result.maxC_ugm3 > 60
+                ? "This exceeds healthy limits — sensitive groups should avoid outdoor activity in the downwind area."
+                : result.maxC_ugm3 > 30
+                ? "Moderate levels — sensitive individuals may want to limit prolonged outdoor activity downwind."
+                : "Levels are within acceptable range for most people."}
+            </p>
           </div>
         )}
 
-        {result && !error && (
-          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 6,
-            background: "rgba(79,142,247,0.06)", border: "1px solid rgba(79,142,247,0.12)",
-            fontSize: 11, color: "var(--text-sub)" }}>
-            Peak ground-level concentration:{" "}
-            <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
-              {result.maxC_ugm3.toFixed(2)} µg/m³
-            </strong>
-            {" "}using stability class{" "}
-            <strong style={{ color: "var(--accent)" }}>{result.cls}</strong>
-            {" "}· peak at{" "}
-            <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
-              {result.peakX_m} m
-            </strong>{" "}downwind
+        {/* Stability class explanation */}
+        {result && (
+          <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.6 }}>
+            <strong style={{ color: "var(--text-sub)" }}>Air Stability:</strong>{" "}
+            {STABILITY_LABELS[result.cls] || result.cls} —{" "}
+            {["A", "B"].includes(result.cls) && "pollutants disperse quickly in turbulent air."}
+            {["C", "D"].includes(result.cls) && "moderate dispersion — pollutants spread at a medium rate."}
+            {["E", "F"].includes(result.cls) && "pollutants stay concentrated near ground level — poor dispersion."}
           </div>
         )}
       </div>
 
-      {/* ── Canvas ── */}
-      <div className="plume-canvas-section">
-        <div className="chart-header" style={{ marginBottom: 8 }}>
-          <span className="chart-title">Ground-Level Concentration Footprint</span>
+      {/* ── Right: Canvas visualization ── */}
+      <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-sub)" }}>
+            Pollution Dispersion Map
+          </span>
           {result && (
             <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
-              Computed by backend · {result.grid?.length ?? 0} cells
+              {result.grid?.length ?? 0} cells computed
             </span>
           )}
         </div>
 
-        {/* Canvas is always mounted so canvasRef is always valid */}
         <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 280, position: "relative" }}>
-          <canvas ref={canvasRef} className="plume-canvas"
+          <canvas ref={canvasRef}
             style={{ flex: 1, minHeight: 280, background: "#060912", borderRadius: 8 }} />
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 9, color: "var(--text-dim)" }}>{result ? "µg/m³" : ""}</span>
             <canvas ref={legendRef} style={{ borderRadius: 4 }} />
           </div>
 
-          {/* Overlay: shown only when no result yet or loading */}
+          {/* Overlay: loading or empty state */}
           {(!result || loading) && (
             <div style={{
               position: "absolute", inset: 0, display: "flex", alignItems: "center",
@@ -292,20 +279,37 @@ export default function PlumeVisualizer() {
               background: "rgba(6,9,15,0.88)", borderRadius: 8,
             }}>
               {loading ? (
-                <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                  ⟳&nbsp; Requesting grid from backend…
-                </span>
+                <div>
+                  <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 13 }}>
+                    ⟳ Computing dispersion…
+                  </span>
+                  <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6 }}>
+                    Using Pasquill-Gifford model with Briggs coefficients
+                  </div>
+                </div>
+              ) : error ? (
+                <span style={{ color: "#ef4444", fontSize: 12 }}>{error}</span>
               ) : (
-                <span style={{ color: "var(--text-dim)", fontSize: 13, lineHeight: 1.7 }}>
-                  Configure parameters and click<br />
-                  <strong style={{ color: "var(--accent)" }}>Compute Dispersion</strong><br />
-                  to see the concentration map
+                <span style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.7 }}>
+                  {latest?.pollutants
+                    ? "Computing from live data…"
+                    : "Select a station with sensor data to see the dispersion map"}
                 </span>
               )}
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ParamItem({ label, value, sub }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 600, color: "var(--text-dim)", letterSpacing: "0.5px" }}>{label}</div>
+      <div style={{ fontSize: 13, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--text)" }}>{value}</div>
+      <div style={{ fontSize: 9, color: "var(--text-dim)" }}>{sub}</div>
     </div>
   );
 }

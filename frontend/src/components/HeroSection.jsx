@@ -1,10 +1,15 @@
-const POLLUTANTS_LIST = ["PM2.5", "PM10", "NO₂", "O₃", "CO", "NH₃"];
+export default function HeroSection({ stations, selected, onSelect, aqi, onRunAnalysis }) {
+  const value = aqi?.aqi;
+  const cat   = aqi?.category;
 
-export default function HeroSection({ stations, selected, onSelect, onRunAnalysis }) {
+  const catColor = {
+    Good: "#22c55e", Satisfactory: "#a3e635", Moderate: "#facc15",
+    Poor: "#f97316", "Very Poor": "#ef4444", Severe: "#9f1239",
+  }[cat] || "#7b93b8";
+
   return (
     <section className="hero">
       <div className="hero-inner">
-        {/* Left: heading */}
         <div>
           <div className="hero-location">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -12,59 +17,53 @@ export default function HeroSection({ stations, selected, onSelect, onRunAnalysi
             </svg>
             Bangalore, Karnataka
           </div>
-
           <h1 className="hero-heading">
             Air Quality<br />Intelligence
           </h1>
-
           <p className="hero-sub">
-            CPCB AQI, pollutant sub-indices, AI forecast, Gaussian plume dispersion,
-            and real-time station monitoring from the KSPCB network.
+            Real-time health indices, AI forecast, and pollution dispersion
+            from the KSPCB monitoring network.
           </p>
         </div>
 
-        {/* Right: control card */}
         <div className="hero-card">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <div>
-              <div className="hero-card-label">Station</div>
-              <select
-                className="hero-select"
-                value={selected || ""}
-                onChange={(e) => onSelect(e.target.value)}
-              >
-                {stations.map((s) => (
-                  <option key={s.station_id} value={s.station_id}>
-                    {s.station_id.replace("KSPCB-", "")}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="hero-card-label">Pollutant</div>
-              <select className="hero-select" defaultValue="PM2.5">
-                {POLLUTANTS_LIST.map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <div className="hero-card-label">Monitoring Station</div>
+          <select className="hero-select" value={selected || ""} onChange={(e) => onSelect(e.target.value)}>
+            {stations.map((s) => (
+              <option key={s.station_id} value={s.station_id}>{s.station_id.replace("KSPCB-", "")}</option>
+            ))}
+          </select>
 
           <button className="hero-btn" onClick={onRunAnalysis}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
-            Run Analysis
+            View Dashboard
           </button>
 
-          <div style={{
-            marginTop: 14, padding: "10px 14px",
-            background: "rgba(0,229,160,0.06)", borderRadius: 10,
-            border: "1px solid rgba(0,229,160,0.14)",
-            fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6,
-          }}>
-            Pipeline: Input → Preprocess → AQI → Forecast → Plume → Zones
-          </div>
+          {value != null && (
+            <div style={{
+              marginTop: 14, padding: "12px 16px", borderRadius: 12,
+              background: "rgba(0,229,160,0.06)", border: "1px solid rgba(0,229,160,0.14)",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-dim)" }}>
+                  Current AQI
+                </div>
+                <div style={{ fontSize: 28, fontFamily: "var(--font-mono)", fontWeight: 800, color: catColor, lineHeight: 1.1 }}>
+                  {value}
+                </div>
+              </div>
+              <div style={{
+                padding: "4px 14px", borderRadius: 20,
+                fontSize: 11, fontWeight: 700, color: catColor,
+                background: `${catColor}18`, border: `1px solid ${catColor}40`,
+              }}>
+                {cat}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </section>

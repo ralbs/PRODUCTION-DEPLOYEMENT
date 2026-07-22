@@ -456,6 +456,62 @@ body {
 .error-bar { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); color: #f87171; padding: 8px 16px; border-radius: 8px; font-size: 12px; margin: 0 28px 16px; }
 .section-pad { padding: 0 28px; max-width: 1400px; margin: 0 auto; width: 100%; }
 
+/* ──────────────────────────────── HEALTH INTELLIGENCE ── */
+.health-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.health-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.health-pollutant-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+.health-hero-banner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: center;
+}
+.health-exposure-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.health-contrib-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.health-ref-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.health-ref-labels {
+  display: flex;
+  margin-top: 4px;
+}
+
+@media (max-width: 1100px) {
+  .health-metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .health-detail-grid { grid-template-columns: 1fr; }
+  .health-pollutant-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 768px) {
+  .health-hero-banner { grid-template-columns: 1fr; }
+  .health-metric-grid { grid-template-columns: 1fr; }
+  .health-exposure-grid { grid-template-columns: 1fr; }
+  .health-pollutant-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* station-select used in header */
 .station-select {
   font-size: 13px; font-weight: 500; padding: 6px 28px 6px 10px;
@@ -523,6 +579,8 @@ body {
   .content-grid { grid-template-columns: 1fr; }
   .charts-band  { grid-template-columns: 1fr; }
   .aqi-legend-bar { grid-template-columns: repeat(3, 1fr); }
+  .health-metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .health-detail-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
@@ -533,6 +591,9 @@ body {
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }
   .station-table thead th:nth-child(4),
   .station-table td:nth-child(4) { display: none; }
+  .health-metric-grid { grid-template-columns: 1fr; }
+  .health-pollutant-grid { grid-template-columns: repeat(2, 1fr); }
+  .health-exposure-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
