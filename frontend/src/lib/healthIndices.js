@@ -246,11 +246,15 @@ export function calcHBI(iriBefore, iriAfter) {
 // Master calculator — computes all available indices from raw pollutants
 // ─────────────────────────────────────────────────────────────────────────────
 export function computeAllIndices(pollutants, weather = {}, forecast = null, currentAQI = null) {
+  // PPM to µg/m³ at 25°C / 1 atm: mass_conc = ppm × (MW × 1000) / 24.45
+  const NO2_PPM_TO_UGM3 = 46.0055 * 1000 / 24.45;
+  const O3_PPM_TO_UGM3  = 48.0 * 1000 / 24.45;
+
   const p = {
     pm2_5: pollutants?.pm2_5,
     pm10:  pollutants?.pm10,
-    no2:   pollutants?.no2,
-    o3:    pollutants?.o3,
+    no2:   pollutants?.no2 != null ? pollutants?.no2 * NO2_PPM_TO_UGM3 : null,
+    o3:    pollutants?.o3  != null ? pollutants?.o3  * O3_PPM_TO_UGM3  : null,
     so2:   pollutants?.so2,
     co:    pollutants?.co,
   };
@@ -314,19 +318,17 @@ export function respiratoryRisk(rsi) {
 }
 
 export function cpmContribution(pollutants) {
-  const p = {
-    pm2_5: pollutants?.pm2_5 || 0,
-    pm10:  pollutants?.pm10  || 0,
-    no2:   (pollutants?.no2  || 0) * 0.001587,
-    o3:    (pollutants?.o3   || 0) * 0.001044,
-    so2:   (pollutants?.so2  || 0) * 0.00993,
-  };
-  // Normalize to CRP contribution using beta × concentration
+  const NO2_PPM_TO_UGM3 = 46.0055 * 1000 / 24.45;
+  const O3_PPM_TO_UGM3  = 48.0 * 1000 / 24.45;
+  const no2_ugm3 = (pollutants?.no2 || 0) * NO2_PPM_TO_UGM3;
+  const o3_ugm3  = (pollutants?.o3  || 0) * O3_PPM_TO_UGM3;
+  const so2      = pollutants?.so2 || 0;
+
   const pm25Contrib = CRP_BETAS.pm2_5 * (pollutants?.pm2_5 || 0);
   const pm10Contrib = CRP_BETAS.pm10  * (pollutants?.pm10  || 0);
-  const no2Contrib  = CRP_BETAS.no2   * (pollutants?.no2   || 0);
-  const o3Contrib   = CRP_BETAS.o3    * (pollutants?.o3    || 0);
-  const so2Contrib  = CRP_BETAS.so2   * (pollutants?.so2   || 0);
+  const no2Contrib  = CRP_BETAS.no2   * no2_ugm3;
+  const o3Contrib   = CRP_BETAS.o3    * o3_ugm3;
+  const so2Contrib  = CRP_BETAS.so2   * so2;
   const total = pm25Contrib + pm10Contrib + no2Contrib + o3Contrib + so2Contrib || 1;
 
   return [

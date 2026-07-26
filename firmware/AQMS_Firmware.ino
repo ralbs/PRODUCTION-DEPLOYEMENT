@@ -163,16 +163,8 @@ void loop() {
   static unsigned long lastPmsDbg = 0;
   if (millis() - lastPmsDbg >= 5000) {
     lastPmsDbg = millis();
-    int avail = pmsSerial.available();
-    Serial.printf("[DEBUG] PMS5003 — bytes: %d, valid: %d, pm1: %d, pm2_5: %d, pm10: %d\n",
-                  avail, fresh.valid, cachedPMS.pm1, cachedPMS.pm2_5, cachedPMS.pm10);
-    if (avail > 0 && avail < 64) {
-      Serial.print("[DEBUG] PMS raw: ");
-      while (pmsSerial.available()) {
-        Serial.printf("%02X ", pmsSerial.read());
-      }
-      Serial.println();
-    }
+    Serial.printf("[DEBUG] PMS5003 — valid: %d, pm1: %d, pm2_5: %d, pm10: %d\n",
+                  fresh.valid, cachedPMS.pm1, cachedPMS.pm2_5, cachedPMS.pm10);
   }
 
   if (millis() - lastSend >= TELEMETRY_INTERVAL_MS) {
@@ -243,26 +235,41 @@ float adsToVoltage(Adafruit_ADS1115 &ads, uint8_t ch) {
   return ads.computeVolts(raw);
 }
 
+// PMS5003 streaming state machine
+enum PMSState { PMS_WAIT_H1, PMS_WAIT_H2, PMS_READ_PAYLOAD };
+static PMSState pmsState = PMS_WAIT_H1;
+static uint8_t  pmsBuf[30];
+static uint8_t  pmsIdx = 0;
+
 PMSData readPMS() {
   PMSData data;
-  while (pmsSerial.available() >= 32) {
-    if (pmsSerial.read() != 0x42) continue;
-    if (pmsSerial.peek() != 0x4D) continue;
-
-    uint8_t buf[30];
-    buf[0] = 0x4D;
-    pmsSerial.readBytes(buf + 1, 29);
-
-    uint16_t checksum = 0x42 + buf[0];
-    for (int i = 1; i < 28; i++) checksum += buf[i];
-    uint16_t recvChecksum = (buf[28] << 8) | buf[29];
-    if (checksum != recvChecksum) continue;
-
-    data.pm1   = (buf[4] << 8) | buf[5];
-    data.pm2_5 = (buf[6] << 8) | buf[7];
-    data.pm10  = (buf[8] << 8) | buf[9];
-    data.valid = true;
-    break;
+  while (pmsSerial.available()) {
+    uint8_t b = pmsSerial.read();
+    switch (pmsState) {
+      case PMS_WAIT_H1:
+        if (b == 0x42) pmsState = PMS_WAIT_H2;
+        break;
+      case PMS_WAIT_H2:
+        pmsState = (b == 0x4D) ? PMS_READ_PAYLOAD : PMS_WAIT_H1;
+        pmsIdx = 0;
+        break;
+      case PMS_READ_PAYLOAD:
+        pmsBuf[pmsIdx++] = b;
+        if (pmsIdx >= 30) {
+          uint16_t checksum = 0x42 + 0x4D;
+          for (int i = 0; i < 28; i++) checksum += pmsBuf[i];
+          uint16_t recvChecksum = (pmsBuf[28] << 8) | pmsBuf[29];
+          if (checksum == recvChecksum) {
+            data.pm1   = (pmsBuf[2] << 8) | pmsBuf[3];
+            data.pm2_5 = (pmsBuf[4] << 8) | pmsBuf[5];
+            data.pm10  = (pmsBuf[6] << 8) | pmsBuf[7];
+            data.valid = true;
+          }
+          pmsState = PMS_WAIT_H1;
+          return data;
+        }
+        break;
+    }
   }
   return data;
 }
