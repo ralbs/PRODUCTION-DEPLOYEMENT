@@ -245,7 +245,7 @@ export function calcHBI(iriBefore, iriAfter) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Master calculator — computes all available indices from raw pollutants
 // ─────────────────────────────────────────────────────────────────────────────
-export function computeAllIndices(pollutants, weather = {}, forecast = null) {
+export function computeAllIndices(pollutants, weather = {}, forecast = null, currentAQI = null) {
   const p = {
     pm2_5: pollutants?.pm2_5,
     pm10:  pollutants?.pm10,
@@ -280,7 +280,7 @@ export function computeAllIndices(pollutants, weather = {}, forecast = null) {
     ced,
     vi,
     cawi,
-    ppi:     calcPPI(forecast?.aqi, null),
+    ppi:     calcPPI(forecast?.aqi, currentAQI),
     fhi:     calcFHI(forecast?.iri),
     hbi:     null,
     sci:     calcSCI(),

@@ -55,7 +55,8 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
   const indices = useMemo(() => {
     if (!latest?.pollutants) return null;
     return computeAllIndices(latest.pollutants, latest.weather || {},
-      forecast ? { aqi: forecast?.aqi?.aqi } : null);
+      forecast ? { aqi: forecast?.current_aqi?.aqi } : null,
+      latest?.aqi?.aqi ?? null);
   }, [latest?.pollutants, latest?.weather, forecast]);
 
   const contributions = useMemo(() => {
