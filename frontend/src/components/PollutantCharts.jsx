@@ -68,7 +68,7 @@ export default function PollutantCharts({ history, chartType = "pm" }) {
           <Tooltip {...TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10, color: "var(--text-dim)" }} />
           <Line type="monotone" dataKey="NO₂ (µg/m³)" stroke="#f97316" strokeWidth={1.8} dot={false} connectNulls />
-          <Line type="monotone" dataKey="O₃ (µg/m³)"  stroke="#22c55e" strokeWidth={1.8} dot={false} connectNulls />
+          {/* <Line type="monotone" dataKey="O₃ (µg/m³)" stroke="#22c55e" strokeWidth={1.8} dot={false} connectNulls /> disabled (hardware not connected) */}
           <Line type="monotone" dataKey="CO (mg/m³)"  stroke="#facc15" strokeWidth={1.8} dot={false} connectNulls />
         </LineChart>
       </ResponsiveContainer>

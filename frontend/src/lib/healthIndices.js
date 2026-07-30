@@ -1,5 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // healthIndices.js
+// NOTE: O3 display is disabled across the UI — the MiCS-6814 CO (RED) pin
+// is not connected on the PCB, so O3 data is always null/missing.
+// Health index math is kept as-is (O3 resolves to 0 when absent).
+// ─────────────────────────────────────────────────────────────────────────────
 // Peer-reviewed formulas, published coefficients, and engineering indices
 // for the AQMS Health Intelligence layer.
 //

@@ -114,7 +114,7 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
         <Card label="Cardiovascular" value={indices.csi} unit="/100" sub={cvRisk.label}
           color={cvRisk.color} tip="Heart and blood vessel strain from PM2.5, NO₂, CO" />
         <Card label="Respiratory" value={indices.rsi} unit="/100" sub={respRisk.label}
-          color={respRisk.color} tip="Lung irritation risk from PM2.5, PM10, SO₂, O₃" />
+          color={respRisk.color} tip="Lung irritation risk from PM2.5, PM10, SO₂" />
         <Card label="Oxidative Stress" value={indices.osi} unit="/100"
           sub={indices.osi <= 25 ? "Low" : indices.osi <= 50 ? "Moderate" : "High"}
           color={indices.osi <= 25 ? "#22c55e" : indices.osi <= 50 ? "#facc15" : "#ef4444"}
@@ -243,7 +243,7 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
             { label: "PM2.5", value: p.pm2_5, unit: "µg/m³", who: 5, color: "#ef4444" },
             { label: "PM10",  value: p.pm10,  unit: "µg/m³", who: 15, color: "#f97316" },
             { label: "NO₂",   value: p.no2 != null ? +(p.no2 * 46.0055 * 1000 / 24.45).toFixed(1) : null, unit: "µg/m³", who: 10, color: "#facc15" },
-            { label: "O₃",    value: p.o3  != null ? +(p.o3  * 48.0 * 1000 / 24.45).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },
+            // { label: "O₃",    value: p.o3  != null ? +(p.o3  * 48.0 * 1000 / 24.45).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },  // disabled (hardware not connected)
             { label: "CO",    value: p.co,     unit: "ppm",   who: null, color: "#38bdf8" },
           ].map((item) => {
             const over = item.who && item.value > item.who * 3;

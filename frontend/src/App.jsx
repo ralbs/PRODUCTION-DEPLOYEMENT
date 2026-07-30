@@ -184,7 +184,7 @@ export default function App() {
         <FullscreenCard title="Particulate Matter" icon={<ChartIcon />} meta="µg/m³">
           <PollutantCharts history={history} chartType="pm" />
         </FullscreenCard>
-        <FullscreenCard title="Gas Pollutants" icon={<ChartIcon />} meta="NO₂ · O₃ · CO">
+        <FullscreenCard title="Gas Pollutants" icon={<ChartIcon />} meta="NO₂ · CO">
           <PollutantCharts history={history} chartType="gas" />
         </FullscreenCard>
       </div>

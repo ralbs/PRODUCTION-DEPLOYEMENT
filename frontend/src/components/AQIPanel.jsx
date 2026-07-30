@@ -7,7 +7,7 @@ const CATEGORY_COLORS = {
   Severe: "#791F1F",
 };
 
-const LABELS = { pm2_5: "PM2.5", pm10: "PM10", no2: "NO2", o3: "O3", co: "CO" };
+const LABELS = { pm2_5: "PM2.5", pm10: "PM10", no2: "NO2", co: "CO" /*, o3: "O3" — disabled (hardware not connected) */ };
 
 export default function AQIPanel({ aqi, timestamp }) {
   if (!aqi) {

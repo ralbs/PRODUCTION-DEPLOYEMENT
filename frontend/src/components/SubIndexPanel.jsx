@@ -4,7 +4,7 @@ const POLLUTANTS = [
   { key: "pm2_5", label: "PM2.5", unit: "µg/m³", max: 500, fmt: (v) => v?.toFixed(1) ?? "–" },
   { key: "pm10",  label: "PM10",  unit: "µg/m³", max: 600, fmt: (v) => v?.toFixed(1) ?? "–" },
   { key: "no2",   label: "NO₂",   unit: "µg/m³", max: 400, fmt: (v) => conv.no2_ugm3(v) ?? "–" },
-  { key: "o3",    label: "O₃",    unit: "µg/m³", max: 400, fmt: (v) => conv.o3_ugm3(v) ?? "–" },
+  // { key: "o3",    label: "O₃",    unit: "µg/m³", max: 400, fmt: (v) => conv.o3_ugm3(v) ?? "–" },  // disabled (hardware not connected)
   { key: "co",    label: "CO",    unit: "mg/m³",  max: 50,  fmt: (v) => conv.co_mgm3(v) ?? "–" },
 ];
 
