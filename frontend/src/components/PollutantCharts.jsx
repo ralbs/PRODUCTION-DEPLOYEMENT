@@ -44,7 +44,7 @@ export default function PollutantCharts({ history, chartType = "pm" }) {
   const gasData = slice.map((h) => ({
     time: fmtTs(h.timestamp),
     "NO₂ (µg/m³)": conv.no2_ugm3(h.pollutants?.no2),
-    "O₃ (µg/m³)":  conv.o3_ugm3(h.pollutants?.o3),
+    // "O₃ (µg/m³)":  conv.o3_ugm3(h.pollutants?.o3),
     "CO (mg/m³)":  conv.co_mgm3(h.pollutants?.co),
   }));
 

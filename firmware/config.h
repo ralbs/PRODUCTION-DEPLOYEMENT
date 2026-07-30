@@ -36,6 +36,24 @@
 #define CH_MQ8_AOUT       2   // MQ-8 (H2)
 // AIN3: unconnected
 
+// ============ Gas curve constants: ppm = a * (Rs/RO)^b ============
+// Datasheet curve fits. NO2 is positive exponent (oxidizing gas).
+#define GAS_VC             5.0f
+#define GAS_A_NH3          102.2f
+#define GAS_B_NH3          -1.673f
+#define GAS_A_NO2          1.007f
+#define GAS_B_NO2          0.489f
+#define GAS_A_O3           23.943f
+#define GAS_B_O3           -1.11f
+#define GAS_A_MQ135        102.2f
+#define GAS_B_MQ135        -2.473f
+#define GAS_A_H2S          127.4f
+#define GAS_B_H2S          -2.862f
+#define GAS_A_H2           976.97f
+#define GAS_B_H2           -0.688f
+#define GAS_A_CO           99.042f
+#define GAS_B_CO           -1.518f
+
 // ============ PMS5003 — Serial1 ============
 #define PMS_RX_PIN        25   // ESP32 RX <- PMS5003 TX
 #define PMS_TX_PIN        26   // ESP32 TX -> PMS5003 RX
@@ -56,6 +74,8 @@
 #define NTP_SERVER            "pool.ntp.org"
 #define GMT_OFFSET_SEC         19800   // IST +5:30
 #define DAYLIGHT_OFFSET_SEC    0
+#define NTP_TIMEOUT_MS         5000    // getLocalTime() wait (ms)
+#define NTP_RESYNC_MS          21600000UL  // re-sync every 6 hours
 
 // ============ WiFi Config ============
 #define WIFI_SSID         "Vinni"

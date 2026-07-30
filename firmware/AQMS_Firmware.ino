@@ -49,11 +49,11 @@ void  connectWiFi();
 bool  connectGPRS();
 PMSData readPMS();
 float adsToVoltage(Adafruit_ADS1115 &ads, uint8_t ch);
+float rsRatio(float vNow, float vBaseline, float vc = GAS_VC);
+float estimatePPM(float vNow, float vBaseline, float a, float b, float vc = GAS_VC);
 void  runCalibration();
 void  loadBaselineFromFlash();
 void  checkMidnightCalibration();
-float estimatePPM(float vNow, float vBaseline, float sensitivity);
-float estimateCO2FromGasResistance(uint32_t gasRes);
 String buildTelemetryJSON();
 bool  sendTelemetry(const String &json);
 void  bufferOffline(const String &json);
@@ -96,7 +96,7 @@ void setup() {
 
   // Non-blocking ADC Initializations
   if (ads1.begin(ADS1115_ADDR_1)) {
-    ads1.setGain(GAIN_ONE);
+    ads1.setGain(GAIN_TWOTHIRDS);  // ±6.144V — prevents clipping on 5V MQ dividers
     ads1Ok = true;
     Serial.println("[OK] ADS1115 #1 (0x48) initialized.");
   } else {
@@ -104,7 +104,7 @@ void setup() {
   }
 
   if (ads2.begin(ADS1115_ADDR_2)) {
-    ads2.setGain(GAIN_ONE);
+    ads2.setGain(GAIN_TWOTHIRDS);  // ±6.144V — prevents clipping on 5V MQ dividers
     ads2Ok = true;
     Serial.println("[OK] ADS1115 #2 (0x49) initialized.");
   } else {
@@ -142,6 +142,17 @@ void setup() {
 
   connectWiFi();
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+  // Block until NTP syncs (up to 5s) — timestamps will be valid from the first reading
+  {
+    struct tm t;
+    if (getLocalTime(&t, NTP_TIMEOUT_MS)) {
+      Serial.printf("[INFO] NTP synced: %04d-%02d-%02d %02d:%02d:%02d\n",
+                    t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                    t.tm_hour, t.tm_min, t.tm_sec);
+    } else {
+      Serial.println("[WARN] NTP sync timed out — will retry via modem fallback.");
+    }
+  }
 
   loadBaselineFromFlash();
   if (isnan(baseline.mq135) && (ads1Ok || ads2Ok)) {
@@ -157,6 +168,16 @@ void loop() {
 
   wifiOk = (WiFi.status() == WL_CONNECTED);
   checkMidnightCalibration();
+
+  // Periodic NTP re-sync to prevent clock drift
+  static unsigned long lastNtpSync = 0;
+  if (wifiOk && millis() - lastNtpSync >= NTP_RESYNC_MS) {
+    lastNtpSync = millis();
+    struct tm t;
+    if (getLocalTime(&t, NTP_TIMEOUT_MS)) {
+      Serial.println("[INFO] NTP re-sync OK.");
+    }
+  }
 
   PMSData fresh = readPMS();
   if (fresh.valid) cachedPMS = fresh;
@@ -308,6 +329,33 @@ void runCalibration() {
   baseline.mics_nh3 = sNH3 / n;
   baseline.mics_no2 = sNO2 / n;
 
+  // Sanity check: reject if any channel drifted >50% from stored baseline
+  // (indicates dirty air during calibration, not a valid clean-air reference)
+  {
+    MQBaseline stored;
+    File fCheck = LittleFS.open("/baseline.dat", "r");
+    if (fCheck && fCheck.size() == sizeof(stored)) {
+      fCheck.read((uint8_t *)&stored, sizeof(stored));
+      fCheck.close();
+      float checks[] = {
+        fabs(baseline.mq135  - stored.mq135)  / (stored.mq135  + 0.001f),
+        fabs(baseline.mq131  - stored.mq131)  / (stored.mq131  + 0.001f),
+        fabs(baseline.mq136  - stored.mq136)  / (stored.mq136  + 0.001f),
+        fabs(baseline.mq7    - stored.mq7)    / (stored.mq7    + 0.001f),
+        fabs(baseline.mq8    - stored.mq8)    / (stored.mq8    + 0.001f),
+        fabs(baseline.mics_nh3 - stored.mics_nh3) / (stored.mics_nh3 + 0.001f),
+        fabs(baseline.mics_no2 - stored.mics_no2) / (stored.mics_no2 + 0.001f),
+      };
+      for (float d : checks) {
+        if (d > 0.50f) {
+          Serial.printf("[WARN] Baseline sanity FAILED (%.0f%% drift). Keeping old baseline.\n", d * 100);
+          return;
+        }
+      }
+      Serial.println("[INFO] Baseline sanity check passed.");
+    }
+  }
+
   File f = LittleFS.open("/baseline.dat", "w");
   if (f) {
     f.write((uint8_t *)&baseline, sizeof(baseline));
@@ -327,7 +375,7 @@ void loadBaselineFromFlash() {
 
 void checkMidnightCalibration() {
   struct tm t;
-  if (!getLocalTime(&t, 5)) return;
+  if (!getLocalTime(&t, NTP_TIMEOUT_MS)) return;
 
   if (t.tm_hour == RECALIBRATION_HOUR &&
       t.tm_min  == RECALIBRATION_MINUTE &&
@@ -337,18 +385,16 @@ void checkMidnightCalibration() {
   }
 }
 
-float estimatePPM(float vNow, float vBaseline, float sensitivity) {
-  if (isnan(vBaseline) || vBaseline <= 0.01) return -1;
-  float ratio = vNow / vBaseline;
-  if (ratio <= 0) ratio = 0.01;
-  float ppm = sensitivity * pow(ratio, -1.5) * 100.0;
-  return ppm < 0 ? 0 : round(ppm * 10) / 10.0;
+float rsRatio(float vNow, float vBaseline, float vc) {
+  if (vBaseline <= 0.01 || vBaseline >= vc || vNow <= 0.01 || vNow >= vc) return NAN;
+  return ((vc - vNow) * vBaseline) / (vNow * (vc - vBaseline));
 }
 
-float estimateCO2FromGasResistance(uint32_t gasRes) {
-  if (gasRes == 0) return 400;
-  float est = 400.0 + (50000.0 / (float)gasRes) * 1000.0;
-  return constrain(est, 400, 5000);
+float estimatePPM(float vNow, float vBaseline, float a, float b, float vc) {
+  float ratio = rsRatio(vNow, vBaseline, vc);
+  if (isnan(ratio) || ratio <= 0) return -1;
+  float ppm = a * pow(ratio, b);
+  return ppm < 0 ? 0 : round(ppm * 10) / 10.0;
 }
 
 // =====================================================================
@@ -362,7 +408,7 @@ String buildTelemetryJSON() {
 
   struct tm t;
   char tsBuf[25] = "1970-01-01T00:00:00Z";
-  if (getLocalTime(&t, 5)) {
+  if (getLocalTime(&t, NTP_TIMEOUT_MS)) {
     strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%dT%H:%M:%SZ", &t);
   }
   doc["timestamp"] = tsBuf;
@@ -391,18 +437,18 @@ String buildTelemetryJSON() {
   
   // MiCS-6814 channels (on ADS1115 #1)
   pollutants["co"]      = -1;  // MiCS-6814 CO (RED) pin not connected on PCB
-  pollutants["no2"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NO2_MICS), baseline.mics_no2, 0.05) : -1;
-  pollutants["nh3"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NH3_MICS), baseline.mics_nh3, 1.0) : -1;
+  pollutants["no2"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NO2_MICS),   baseline.mics_no2,  GAS_A_NO2,   GAS_B_NO2)   : -1;
+  pollutants["nh3"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NH3_MICS),   baseline.mics_nh3,  GAS_A_NH3,   GAS_B_NH3)   : -1;
 
   // MQ-series channels
-  pollutants["o3"]      = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ131_AOUT), baseline.mq131, 0.05) : -1;
-  pollutants["mq135"]   = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ135_AOUT), baseline.mq135, 1.0) : -1;
-  pollutants["h2s"]     = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ136_AOUT), baseline.mq136, 1.0) : -1;
-  pollutants["h2"]      = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ8_AOUT), baseline.mq8, 1.0) : -1;
-  pollutants["mq7_co"]  = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ7_AOUT), baseline.mq7, 1.0) : -1;
+  pollutants["o3"]      = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ131_AOUT), baseline.mq131,     GAS_A_O3,    GAS_B_O3)    : -1;
+  pollutants["mq135"]   = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ135_AOUT), baseline.mq135,     GAS_A_MQ135, GAS_B_MQ135) : -1;
+  pollutants["h2s"]     = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ136_AOUT), baseline.mq136,     GAS_A_H2S,   GAS_B_H2S)   : -1;
+  pollutants["h2"]      = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ8_AOUT),   baseline.mq8,       GAS_A_H2,    GAS_B_H2)    : -1;
+  pollutants["mq7_co"]  = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ7_AOUT),   baseline.mq7,       GAS_A_CO,    GAS_B_CO)    : -1;
 
-  // eCO2 from BME680 gas resistance
-  pollutants["co2"]     = readingOk ? estimateCO2FromGasResistance(bme.gas_resistance) : 400;
+  // Raw gas resistance from BME680 (not a CO2 measurement)
+  pollutants["voc_gas_ohm"] = readingOk ? bme.gas_resistance : 0;
 
   JsonObject battery = doc.createNestedObject("battery");
   battery["voltage"] = 0;
