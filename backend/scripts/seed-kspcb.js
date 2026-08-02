@@ -6,10 +6,13 @@
  * Safe to re-run — skips stations that already have data.
  *
  * Unit conversions (all at 25°C, 1 atm):
- *   CO  : mg/m³  → ppm  ×  24.45 / 28.01
- *   NO2 : µg/m³  → ppm  ×  24.45 / 46005.5
- *   O3  : µg/m³  → ppm  ×  24.45 / 48000
- *   BP  : mmHg   → hPa  ×  1.33322
+ *   CO  : mg/m³  → µg/m³  × 1000
+ *   NO2 : µg/m³  (stored as-is)
+ *   O3  : µg/m³  (stored as-is)
+ *   BP  : mmHg   → hPa  × 1.33322
+ *
+ * Gases are stored in µg/m³ (the telemetry API units contract). CO uses the
+ * mq7_co field so the AQI calculator picks up the real CO measurement.
  */
 
 require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
@@ -34,10 +37,8 @@ const STATIONS = {
   Silk_Board: { station_id: "KSPCB-Silk_Board", device_id: "KSPCB-SLK-001", lat: 12.9172, lon: 77.6226 },
 };
 
-const CO_MG_TO_PPM  = 24.45 / 28.01;
-const NO2_UG_TO_PPM = 24.45 / (46.0055 * 1000);
-const O3_UG_TO_PPM  = 24.45 / (48.0 * 1000);
-const MMHG_TO_HPA   = 1.33322;
+const CO_MG_TO_UG = 1000;
+const MMHG_TO_HPA = 1.33322;
 
 const BATCH_SIZE = 500;
 
@@ -92,9 +93,9 @@ function parseRow(cols, meta) {
     pollutants: {
       pm2_5: pm25,
       pm10:  pm10,
-      co:    co_mg  != null ? Math.round(co_mg  * CO_MG_TO_PPM  * 1e6) / 1e6 : null,
-      no2:   no2_ug != null ? Math.round(no2_ug * NO2_UG_TO_PPM * 1e8) / 1e8 : null,
-      o3:    o3_ug  != null ? Math.round(o3_ug  * O3_UG_TO_PPM  * 1e8) / 1e8 : null,
+      mq7_co: co_mg != null ? Math.round(co_mg * CO_MG_TO_UG) : null,
+      no2:   no2_ug,
+      o3:    o3_ug,
     },
   };
 }

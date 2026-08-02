@@ -20,10 +20,13 @@ engines, or add validation without touching firmware.
 ```bash
 cp .env.example .env      # edit MONGO_URI, DEVICE_KEYS, etc.
 npm install
+node scripts/setup-db.js  # ensure time-series collection + (device_id, timestamp) index
 docker compose up -d      # local MongoDB (as a single-node replica set) + Mosquitto
 docker exec -it aqms-mongo mongosh --eval "rs.initiate()"   # first run only
 npm run dev
 ```
+
+`setup-db.js` is idempotent — safe to run again after a deploy.
 
 Server starts on `http://localhost:4000` by default. `GET /health` for a
 liveness check.
@@ -42,11 +45,53 @@ model (`models/Device.js`) — store a bcrypt hash per device instead of
 plaintext keys in an env var, and you can revoke one station without
 redeploying the whole backend.
 
+## Units contract
+All gas pollutants in the telemetry payload are in **µg/m³** (NO2, O3, NH3,
+H2S, H2, MQ-135, MQ-7 CO). The backend **never converts units** — the
+firmware must convert before sending. `-1` or `null` means that sensor is
+faulted or not connected.
+
+On ingest and on read the backend applies `sanitizePollutants()` (see
+`lib/aqi.js`): values that are `<= 0`, `NaN`, `null`, or above a physical
+`SANITY_MAX` ceiling are nulled out, so a misconfigured sensor (e.g. stale
+O3 baseline) can no longer blow up the AQI. Sub-indices are **capped at 500**
+(no unbounded extrapolation) — AQI is always in the 0–500 range.
+
+## Health fault alerts
+If any `health.*` string field in the payload is `"FAULT"`, `POST
+/api/telemetry` returns `201` with `alert: { hasFault: true, faulty: [...] }`
+and logs a warning. The dashboard can use `alert.hasFault` to surface
+"maintenance required" instead of interpreting `FAULT` as a reading.
+
 ## REST endpoints
 - `POST /api/telemetry` — device ingest (auth required). Body is exactly the
-  JSON schema the firmware sends.
-- `GET /api/telemetry/latest?station_id=NEL-001` — most recent reading for a station.
-- `GET /api/telemetry/history?station_id=NEL-001&from=...&to=...&limit=500` — range query.
+  JSON schema the firmware sends. Returns `201` + the stored reading (with
+  `sanitized` pollutants and computed `aqi`), plus `alert` when a health
+  fault is detected. Invalid/missing device headers → `401`.
+- `GET /api/telemetry/latest?device_id=ESP32-001` — most recent reading for a
+  device (`station_id` also accepted for backwards compatibility).
+- `GET /api/telemetry/history?device_id=ESP32-001&from=...&to=...&limit=500` — range query.
+
+### Ingest example
+```bash
+curl -X POST https://aqms-backend.onrender.com/api/telemetry \
+  -H "Content-Type: application/json" \
+  -H "X-Device-Id: ESP32-001" \
+  -H "X-Device-Key: <key>" \
+  -d '{
+    "timestamp": "2026-08-02T10:30:00Z",
+    "location": { "lat": 13.0359, "lon": 77.5970 },
+    "pollutants": {
+      "pm1": 6, "pm2_5": 12, "pm10": 13,
+      "no2": -1.0, "nh3": 741.6, "o3": 0.0, "h2s": 0.0,
+      "h2": 0.0, "mq135": 0.0, "mq7_co": 110.5, "co": -1.0
+    },
+    "weather": { "temperature": 28.4, "humidity": 61.0, "pressure": 1012.0 },
+    "battery": { "percent": 87, "voltage": 3.9 },
+    "flags": { "delayed": false, "offline_buffered": false },
+    "health": { "pms5003": "OK", "mq_ads1": "OK", "mq_ads2": "OK", "bme680": "OK" }
+  }'
+```
 
 ## GraphQL
 `POST /graphql` (playground at the same path in dev). Example query:

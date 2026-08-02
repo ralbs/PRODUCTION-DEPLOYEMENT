@@ -6,10 +6,22 @@
  * CPCB also defines SO2, NH3, and Pb breakpoints, but this board has no
  * sensors for those, so they're intentionally left out rather than faked.
  *
+ * Units contract (per the telemetry API spec):
+ *   - PM1 / PM2.5 / PM10           : µg/m³
+ *   - NO2, O3, NH3, H2S, H2, mq135 : µg/m³
+ *   - mq7_co (CO)                  : µg/m³   (CPCB breakpoints use mg/m³ — see conversion below)
+ *   - voc_gas_ohm                  : Ω (BME680 raw gas resistance, informational)
+ *   - `-1` / `null` / `NaN`        : sensor fault or disabled sensor → treated as missing
+ *
  * AQI subindex formula (linear interpolation within a breakpoint band):
  *   Ip = ((IHi - ILo) / (BHi - BLo)) * (Cp - BLo) + ILo
  * Overall AQI = max(available subindices); the pollutant that produced
  * the max is reported as the "dominant pollutant".
+ *
+ * CPCB AQI is bounded 0..500. Concentrations beyond the top band are capped
+ * at 500 rather than extrapolated, and readings that are physically
+ * impossible (a broken/uncalibrated sensor) are rejected entirely so one bad
+ * channel can't poison the whole index.
  */
 
 const BREAKPOINTS = {
@@ -55,15 +67,52 @@ const BREAKPOINTS = {
   ],
 };
 
-// Sensor readings come out as ppm/µg mixes from estimatePPM() in the
-// firmware; CPCB breakpoints are defined in µg/m3 (mg/m3 for CO). Convert
-// at 25°C / 1 atm using the standard ppm→mass concentration formula:
-//   mass_conc = ppm * (molecular_weight / 24.45)
-const PPM_TO_UGM3 = {
-  no2: 46.0055 * 1000 / 24.45, // -> µg/m3 per ppm
-  o3: 48.0 * 1000 / 24.45,     // -> µg/m3 per ppm
-  co: 28.01 / 24.45,           // -> mg/m3 per ppm
+/*
+ * Physically-plausible ceilings per pollutant (µg/m³ for gases, mg/m³ for
+ * co, µg/m³ for PM). Anything above these is a broken/uncalibrated sensor,
+ * not a real reading — a single bad channel must not hijack the AQI.
+ * CO: MQ-7 can legitimately read high near combustion, so allow up to
+ * 100 mg/m³ (CPCB "Severe" band tops out at 50 mg/m³; this still rejects
+ * the ppm-scale garbage seen from uncalibrated firmware).
+ */
+const SANITY_MAX = {
+  pm1:     2000,    // µg/m³
+  pm2_5:   1000,    // µg/m³
+  pm10:    2000,    // µg/m³
+  no2:     2000,    // µg/m³
+  o3:      1000,    // µg/m³
+  nh3:     3000,    // µg/m³
+  h2s:     2000,    // µg/m³
+  h2:      5000,    // µg/m³
+  mq135:  10000,    // µg/m³ (generic air-quality proxy — generous)
+  co:     100000,   // µg/m³ (~100 mg/m³ CO; MiCS CO channel is -1/disabled)
+  mq7_co: 100000,   // µg/m³ (~100 mg/m³ CO)
 };
+
+/**
+ * Return a copy of `pollutants` with invalid readings replaced by null:
+ *   - null / undefined / NaN
+ *   - ≤ 0  (firmware uses -1 as a "sensor fault / disabled" sentinel)
+ *   - above the physically-plausible ceiling (broken/uncalibrated channel)
+ * Unknown keys are left untouched. Raw stored data is never mutated.
+ */
+function sanitizePollutants(pollutants) {
+  if (!pollutants || typeof pollutants !== "object") return pollutants || {};
+  const clean = { ...pollutants };
+
+  for (const key of Object.keys(clean)) {
+    const v = clean[key];
+    if (v == null || (typeof v === "number" && isNaN(v))) {
+      clean[key] = null;
+      continue;
+    }
+    const max = SANITY_MAX[key];
+    if (typeof v === "number" && max != null && (v <= 0 || v > max)) {
+      clean[key] = null;
+    }
+  }
+  return clean;
+}
 
 function subIndex(pollutant, concentration) {
   if (concentration == null || isNaN(concentration) || concentration < 0) return null;
@@ -75,10 +124,9 @@ function subIndex(pollutant, concentration) {
       return Math.round(((iHi - iLo) / (bHi - bLo)) * (concentration - bLo) + iLo);
     }
   }
-  // Above the top published band — CPCB treats this as "severe", extrapolate
-  // linearly past the last band rather than returning nothing.
-  const [, bHi, , iHi] = table[table.length - 1];
-  if (concentration > bHi) return Math.round(iHi + (concentration - bHi));
+  // Above the top published band — cap at the CPCB AQI maximum of 500 rather
+  // than extrapolating unbounded (which let a garbage reading produce AQI ~30M).
+  if (concentration > table[table.length - 1][1]) return 500;
   return null;
 }
 
@@ -92,18 +140,22 @@ function aqiCategory(aqi) {
 }
 
 /**
- * @param pollutants - the `pollutants` object from a telemetry document:
- *   { pm1, pm2_5, pm10, co, co2, no2, o3 }  (co/no2/o3 in ppm, PM in µg/m3)
+ * @param pollutants - the `pollutants` object from a telemetry document.
+ *   All gas channels are already in µg/m³ (see units contract at top).
  */
 function calculateAQI(pollutants) {
   if (!pollutants) return null;
 
+  const clean = sanitizePollutants(pollutants);
+
+  // CPCB breakpoints for CO are in mg/m³; the MQ-7 channel arrives in µg/m³.
+  const coSource = clean.mq7_co != null ? clean.mq7_co : clean.co;
   const concentrations = {
-    pm2_5: pollutants.pm2_5,
-    pm10: pollutants.pm10,
-    no2: pollutants.no2 != null ? pollutants.no2 * PPM_TO_UGM3.no2 : null,
-    o3: pollutants.o3 != null ? pollutants.o3 * PPM_TO_UGM3.o3 : null,
-    co: pollutants.co != null ? pollutants.co * PPM_TO_UGM3.co : null,
+    pm2_5: clean.pm2_5,
+    pm10:  clean.pm10,
+    no2:   clean.no2,   // already µg/m³
+    o3:    clean.o3,    // already µg/m³
+    co:    coSource != null ? coSource / 1000 : null, // µg/m³ -> mg/m³
   };
 
   const subIndices = {};
@@ -129,4 +181,4 @@ function calculateAQI(pollutants) {
   };
 }
 
-module.exports = { calculateAQI, subIndex, aqiCategory, BREAKPOINTS };
+module.exports = { calculateAQI, sanitizePollutants, subIndex, aqiCategory, BREAKPOINTS };

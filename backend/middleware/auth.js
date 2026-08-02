@@ -28,7 +28,7 @@ function authenticateDevice(req, res, next) {
 
   const expected = deviceKeys[deviceId];
   if (!expected || expected !== apiKey) {
-    return res.status(403).json({ error: "Invalid device credentials" });
+    return res.status(401).json({ error: "Invalid device credentials" });
   }
 
   req.deviceId = deviceId;

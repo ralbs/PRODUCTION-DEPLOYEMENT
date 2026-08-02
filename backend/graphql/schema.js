@@ -1,5 +1,6 @@
 const { gql } = require("apollo-server-express");
 const Telemetry = require("../models/Telemetry");
+const { sanitizePollutants } = require("../lib/aqi");
 
 const typeDefs = gql`
   type Location {
@@ -19,15 +20,22 @@ const typeDefs = gql`
     co2: Float
     no2: Float
     o3: Float
+    nh3: Float
+    h2s: Float
+    mq135: Float
+    h2: Float
+    mq7_co: Float
+    voc_gas_ohm: Float
   }
   type Battery {
     voltage: Float
     percent: Float
   }
   type Health {
-    mq135: String
+    mq_ads1: String
+    mq_ads2: String
     pms5003: String
-    dht22: String
+    bme680: String
   }
   type Flags {
     offline_buffered: Boolean
@@ -62,7 +70,7 @@ function toReading(doc) {
     station_id: doc.meta.station_id,
     location: doc.location,
     weather: doc.weather,
-    pollutants: doc.pollutants,
+    pollutants: sanitizePollutants(doc.pollutants),
     battery: doc.battery,
     health: doc.health,
     flags: doc.flags,

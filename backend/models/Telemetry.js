@@ -34,8 +34,12 @@ const telemetrySchema = new mongoose.Schema(
       co2: Number,
       no2: Number,
       o3: Number,
-      nh3: Number,   // MICS-6814 NH3 channel, ppm
-      h2s: Number,   // MQ-136, ppm
+      nh3: Number,   // MICS-6814 NH3 channel, µg/m³
+      h2s: Number,   // MQ-136, µg/m³
+      mq135: Number, // MQ-135 (air-quality index channel), µg/m³
+      h2: Number,    // MQ-8, µg/m³
+      mq7_co: Number,// MQ-7 CO, µg/m³
+      voc_gas_ohm: Number, // BME680 raw gas resistance, Ω
     },
 
     battery: {

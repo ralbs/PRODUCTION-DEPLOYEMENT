@@ -2,7 +2,7 @@ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const Telemetry = require("../models/Telemetry");
 const { authenticateDevice } = require("../middleware/auth");
-const { calculateAQI } = require("../lib/aqi");
+const { calculateAQI, sanitizePollutants } = require("../lib/aqi");
 const { forwardToThingSpeak } = require("../lib/thingspeak");
 
 const router = express.Router();
@@ -33,6 +33,18 @@ function validatePayload(body) {
   return null;
 }
 
+/**
+ * Scan the device `health` object for any "FAULT" flags.
+ * Returns { hasFault, faulty } where `faulty` is the list of failing channels.
+ */
+function checkHealthFaults(health) {
+  if (!health || typeof health !== "object") return { hasFault: false, faulty: [] };
+  const faulty = Object.entries(health)
+    .filter(([, v]) => String(v).toUpperCase() === "FAULT")
+    .map(([k]) => k);
+  return { hasFault: faulty.length > 0, faulty };
+}
+
 // -------------------------------------------------------------------
 // POST /api/telemetry — called by the ESP32 station
 // -------------------------------------------------------------------
@@ -48,6 +60,17 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
     return res.status(403).json({ error: "device_id does not match authenticated device" });
   }
 
+  // Sensor faults are stored as null (never -1), so downstream metrics and
+  // aggregations never see the firmware's sentinel values.
+  const pollutants = sanitizePollutants(body.pollutants);
+
+  // Health alert flag: surface FAULT channels in the response + console so the
+  // ESP32 can log it and ops can spot a failing sensor immediately.
+  const alert = checkHealthFaults(body.health);
+  if (alert.hasFault) {
+    console.warn(`[telemetry] HEALTH FAULT ${body.device_id}: ${alert.faulty.join(", ")}`);
+  }
+
   try {
     const doc = await Telemetry.create({
       timestamp: new Date(body.timestamp),
@@ -57,7 +80,7 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
       },
       location: body.location,
       weather: body.weather,
-      pollutants: body.pollutants,
+      pollutants,
       battery: body.battery,
       signal: body.signal,
       health: body.health,
@@ -66,9 +89,9 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
 
     // Fire-and-forget live republish — ingestion succeeds even if either sink is down.
     req.app.get("mqttPublish")?.(body.station_id, body);
-    forwardToThingSpeak(body.pollutants, body.weather, calculateAQI(body.pollutants)?.aqi);
+    forwardToThingSpeak(pollutants, body.weather, calculateAQI(pollutants)?.aqi);
 
-    res.status(201).json({ status: "stored", id: doc._id });
+    res.status(201).json({ status: "success", id: doc._id, alert });
   } catch (err) {
     console.error("[telemetry] insert failed:", err.message);
     res.status(500).json({ error: "Failed to store telemetry" });
@@ -76,28 +99,36 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
 });
 
 // -------------------------------------------------------------------
-// GET /api/telemetry/latest?station_id=NEL-001
+// GET /api/telemetry/latest?device_id=ESP32-001   (also accepts station_id)
 // -------------------------------------------------------------------
 router.get("/latest", async (req, res) => {
-  const { station_id } = req.query;
-  if (!station_id) return res.status(400).json({ error: "station_id query param required" });
+  const { device_id, station_id } = req.query;
+  const idField = device_id ? "meta.device_id" : "meta.station_id";
+  const idValue = device_id || station_id;
+  if (!idValue) {
+    return res.status(400).json({ error: "device_id (or station_id) query param required" });
+  }
 
-  const doc = await Telemetry.findOne({ "meta.station_id": station_id })
+  const doc = await Telemetry.findOne({ [idField]: idValue })
     .sort({ timestamp: -1 })
     .lean();
 
-  if (!doc) return res.status(404).json({ error: "No telemetry found for this station" });
-  res.json({ ...doc, aqi: calculateAQI(doc.pollutants) });
+  if (!doc) return res.status(404).json({ error: "No telemetry found for this device" });
+  res.json({ ...doc, pollutants: sanitizePollutants(doc.pollutants), aqi: calculateAQI(doc.pollutants) });
 });
 
 // -------------------------------------------------------------------
-// GET /api/telemetry/history?station_id=NEL-001&from=...&to=...&limit=500
+// GET /api/telemetry/history?device_id=...&from=...&to=...&limit=500
 // -------------------------------------------------------------------
 router.get("/history", async (req, res) => {
-  const { station_id, from, to, limit = 500 } = req.query;
-  if (!station_id) return res.status(400).json({ error: "station_id query param required" });
+  const { device_id, station_id, from, to, limit = 500 } = req.query;
+  const idField = device_id ? "meta.device_id" : "meta.station_id";
+  const idValue = device_id || station_id;
+  if (!idValue) {
+    return res.status(400).json({ error: "device_id (or station_id) query param required" });
+  }
 
-  const query = { "meta.station_id": station_id };
+  const query = { [idField]: idValue };
   if (from || to) {
     query.timestamp = {};
     if (from) query.timestamp.$gte = new Date(from);
@@ -109,7 +140,7 @@ router.get("/history", async (req, res) => {
     .limit(Math.min(Number(limit) || 500, 5000))
     .lean();
 
-  res.json(docs.map((d) => ({ ...d, aqi: calculateAQI(d.pollutants) })));
+  res.json(docs.map((d) => ({ ...d, pollutants: sanitizePollutants(d.pollutants), aqi: calculateAQI(d.pollutants) })));
 });
 
 module.exports = router;
