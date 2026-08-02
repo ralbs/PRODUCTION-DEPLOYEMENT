@@ -213,9 +213,11 @@ void loop() {
 
   PMSData fresh = readPMS();
   if (fresh.valid) cachedPMS = fresh;
-  static unsigned long lastPmsDbg = 0;
-  if (millis() - lastPmsDbg >= 5000) {
-    lastPmsDbg = millis();
+  // Debug-log PMS validity only when it flips, so a dead/quiet PMS stream
+  // doesn't spam the serial console. Live PM is in every telemetry payload.
+  static bool lastPmsValid = false;
+  if (fresh.valid != lastPmsValid) {
+    lastPmsValid = fresh.valid;
     Serial.printf("[DEBUG] PMS5003 — valid: %d, pm1: %d, pm2_5: %d, pm10: %d\n",
                   fresh.valid, cachedPMS.pm1, cachedPMS.pm2_5, cachedPMS.pm10);
   }
@@ -465,6 +467,11 @@ float rsRatio(float vNow, float vBaseline, float vc) {
 float estimatePPM(float vNow, float vBaseline, float a, float b, float vc) {
   float ratio = rsRatio(vNow, vBaseline, vc);
   if (isnan(ratio) || ratio <= 0) return -1;
+  // Near Rs/Ro == 1.0 (clean air) the datasheet power-law is not defined — it
+  // extrapolates to hundreds of ppm even with a perfect baseline (CO ~99 ppm,
+  // NH3 ~102 ppm, H2 ~977 ppm). A |ratio-1| under DETECT_RATIO_NEAR_1 means
+  // "measured, below detection": report 0 instead of the clean-air garbage.
+  if (fabs(ratio - 1.0f) < DETECT_RATIO_NEAR_1) return 0;
   float ppm = a * pow(ratio, b);
   return ppm < 0 ? 0 : round(ppm * 10) / 10.0;
 }
@@ -558,7 +565,11 @@ String buildTelemetryJSON() {
   pollutants["co"]      = -1;
   pollutants["no2"]     = gasUgm3(vNO2,   baseline.mics_no2, GAS_A_NO2,   GAS_B_NO2,   MW_NO2, CH_NO2);
   pollutants["nh3"]     = gasUgm3(vNH3,   baseline.mics_nh3, GAS_A_NH3,   GAS_B_NH3,   MW_NH3, CH_NH3);
+#if ENABLE_GAS_O3
   pollutants["o3"]      = gasUgm3(vMQ131, baseline.mq131,    GAS_A_O3,    GAS_B_O3,    MW_O3,  CH_MQ131);
+#else
+  pollutants["o3"]      = -1;   // MQ-131 dead on this board (pinned near ground)
+#endif
   pollutants["mq135"]   = gasUgm3(vMQ135, baseline.mq135,    GAS_A_MQ135, GAS_B_MQ135, 0.0f,   CH_MQ135); // unitless proxy
   pollutants["h2s"]     = gasUgm3(vMQ136, baseline.mq136,    GAS_A_H2S,   GAS_B_H2S,   MW_H2S, CH_MQ136);
   pollutants["h2"]      = gasUgm3(vMQ8,   baseline.mq8,      GAS_A_H2,    GAS_B_H2,    MW_H2,  CH_MQ8);

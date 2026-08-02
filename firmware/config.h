@@ -38,6 +38,9 @@
 
 // ============ Gas curve constants: ppm = a * (Rs/RO)^b ============
 // Datasheet curve fits. NO2 is positive exponent (oxidizing gas).
+// The MQ-7 CO channel may be overridden by a backend-fitted calibration
+// (KSPCB co-location fit, see backend/scripts/fit-co.js); these are the
+// datasheet fallbacks until a Calibration document exists for the device.
 #define GAS_VC             5.0f
 #define GAS_A_NH3          102.2f
 #define GAS_B_NH3          -1.673f
@@ -53,6 +56,11 @@
 #define GAS_B_H2           -0.688f
 #define GAS_A_CO           99.042f
 #define GAS_B_CO           -1.518f
+
+// O3 (MQ-131) is permanently faulted on this board — the module's output is
+// pinned near ground (no response), so the channel is always shipped as -1.
+// Set to 1 only after the sensor/ADC path is repaired and re-verified.
+#define ENABLE_GAS_O3      0
 
 // ============ Gas units & sanity guards ============
 // The telemetry API units contract: gases are stored in µg/m³. The firmware
@@ -72,16 +80,27 @@
 #define RATIO_MIN          0.02f
 #define RATIO_MAX          20.0f
 
+// Below-detection floor: near Rs/Ro == 1.0 (clean air) the datasheet
+// power-law extrapolates to hundreds of ppm (CO ~99 ppm, NH3 ~102 ppm,
+// H2 ~977 ppm) even with a perfect baseline — that is the residual garbage
+// seen after recalibration. A channel whose |ratio - 1| stays under
+// DETECT_RATIO_NEAR_1 is "measured, below detection" and reports 0 instead.
+#define DETECT_RATIO_NEAR_1 0.20f
+
 // Stuck-channel detection: a gas channel whose raw ADC voltage stays within
 // STUCK_DEADBAND_V across STUCK_SAMPLES consecutive minute-readings is frozen
 // (dead sensor / broken ADC path) and reported as FAULT instead of a constant
-// fake reading.
+// fake reading. STUCK_SAMPLES is deliberately high — slow MQ/MiCS channels can
+// legitimately sit flat for several minutes, so a low count false-positives.
 #define STUCK_DEADBAND_V   0.001f
-#define STUCK_SAMPLES      5
+#define STUCK_SAMPLES      15
 
 // ============ PMS5003 — Serial1 ============
-#define PMS_RX_PIN        25   // ESP32 RX <- PMS5003 TX
-#define PMS_TX_PIN        26   // ESP32 TX -> PMS5003 RX
+// Verified wiring on the physical board (matches sketch_jul25a/CONFIG.H):
+//   ESP32 RX (GPIO26) <- PMS5003 TX
+//   ESP32 TX (GPIO25) -> PMS5003 RX
+#define PMS_RX_PIN        26
+#define PMS_TX_PIN        25
 
 // ============ SIM800C — Serial2 ============
 #define GSM_RX_PIN        16   // ESP32 RX <- SIM800C TX
