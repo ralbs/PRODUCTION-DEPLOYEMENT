@@ -89,6 +89,16 @@ const SANITY_MAX = {
   mq7_co: 100000,   // µg/m³ (~100 mg/m³ CO)
 };
 
+/*
+ * Gas channels are only trusted once the firmware's estimatePPM() model is
+ * properly calibrated (real datasheet curves + a clean baseline) and it sends
+ * µg/m³. Until then the placeholder model ships garbage (O3 ~8000 "ppm",
+ * CO ~23000 µg/m³), so all gas sub-indices are nulled and AQI is PM-only.
+ * Set TRUST_GAS_SENSORS=true in .env only after recalibrating + reflashing.
+ */
+const GAS_POLLUTANTS = ["no2", "o3", "nh3", "h2s", "h2", "mq135", "co", "mq7_co"];
+const TRUST_GAS_SENSORS = process.env.TRUST_GAS_SENSORS === "true";
+
 /**
  * Return a copy of `pollutants` with invalid readings replaced by null:
  *   - null / undefined / NaN
@@ -101,6 +111,10 @@ function sanitizePollutants(pollutants) {
   const clean = { ...pollutants };
 
   for (const key of Object.keys(clean)) {
+    if (!TRUST_GAS_SENSORS && GAS_POLLUTANTS.includes(key)) {
+      clean[key] = null;
+      continue;
+    }
     const v = clean[key];
     if (v == null || (typeof v === "number" && isNaN(v))) {
       clean[key] = null;

@@ -57,6 +57,13 @@ On ingest and on read the backend applies `sanitizePollutants()` (see
 O3 baseline) can no longer blow up the AQI. Sub-indices are **capped at 500**
 (no unbounded extrapolation) — AQI is always in the 0–500 range.
 
+### TRUST_GAS_SENSORS
+The MQ/MiCS gas channels currently ship raw placeholder-model output (uncalibrated,
+ppm-scale garbage). Set `TRUST_GAS_SENSORS=false` (the default) to null all gas
+channels so AQI is computed from PM only — truthful until the firmware is
+recalibrated (real datasheet curves, clean `/baseline.dat`, and µg/m³ output).
+Set it to `true` only after that firmware work, to include gases in the AQI.
+
 ## Health fault alerts
 If any `health.*` string field in the payload is `"FAULT"`, `POST
 /api/telemetry` returns `201` with `alert: { hasFault: true, faulty: [...] }`
