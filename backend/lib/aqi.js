@@ -90,14 +90,22 @@ const SANITY_MAX = {
 };
 
 /*
- * Gas channels are only trusted once the firmware's estimatePPM() model is
- * properly calibrated (real datasheet curves + a clean baseline) and it sends
- * µg/m³. Until then the placeholder model ships garbage (O3 ~8000 "ppm",
- * CO ~23000 µg/m³), so all gas sub-indices are nulled and AQI is PM-only.
- * Set TRUST_GAS_SENSORS=true in .env only after recalibrating + reflashing.
+ * Gas channels are only trusted after the firmware's estimatePPM() model is
+ * properly calibrated. Instead of a single global on/off switch, trust is
+ * granted PER CHANNEL via the TRUSTED_GAS_CHANNELS env var (comma-separated).
+ * This lets a genuinely calibrated channel (e.g. MQ-7 CO after a KSPCB fit)
+ * enter the AQI while the un-calibratable channels stay permanently nulled:
+ * NO₂ / NH₃ have their signal buried in ±10% noise, O₃ is a hardware fault,
+ * and H₂S / H₂ / MQ-135 have no reference to fit against.
+ * Example: TRUSTED_GAS_CHANNELS=mq7_co
  */
 const GAS_POLLUTANTS = ["no2", "o3", "nh3", "h2s", "h2", "mq135", "co", "mq7_co"];
-const TRUST_GAS_SENSORS = process.env.TRUST_GAS_SENSORS === "true";
+const TRUSTED_GAS_CHANNELS = new Set(
+  (process.env.TRUSTED_GAS_CHANNELS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
 
 /**
  * Return a copy of `pollutants` with invalid readings replaced by null:
@@ -111,7 +119,7 @@ function sanitizePollutants(pollutants) {
   const clean = { ...pollutants };
 
   for (const key of Object.keys(clean)) {
-    if (!TRUST_GAS_SENSORS && GAS_POLLUTANTS.includes(key)) {
+    if (GAS_POLLUTANTS.includes(key) && !TRUSTED_GAS_CHANNELS.has(key)) {
       clean[key] = null;
       continue;
     }

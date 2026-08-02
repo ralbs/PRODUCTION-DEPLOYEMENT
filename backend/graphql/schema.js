@@ -1,6 +1,6 @@
 const { gql } = require("apollo-server-express");
 const Telemetry = require("../models/Telemetry");
-const { sanitizePollutants } = require("../lib/aqi");
+const { preparePollutants } = require("../lib/prepare");
 
 const typeDefs = gql`
   type Location {
@@ -62,7 +62,7 @@ const typeDefs = gql`
   }
 `;
 
-function toReading(doc) {
+async function toReading(doc) {
   return {
     id: doc._id.toString(),
     timestamp: doc.timestamp.toISOString(),
@@ -70,7 +70,7 @@ function toReading(doc) {
     station_id: doc.meta.station_id,
     location: doc.location,
     weather: doc.weather,
-    pollutants: sanitizePollutants(doc.pollutants),
+    pollutants: await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id),
     battery: doc.battery,
     health: doc.health,
     flags: doc.flags,
@@ -97,7 +97,9 @@ const resolvers = {
         .sort({ timestamp: -1 })
         .limit(Math.min(limit, 5000))
         .lean();
-      return docs.map(toReading);
+      const out = [];
+      for (const d of docs) out.push(await toReading(d));
+      return out;
     },
 
     stations: async () => {

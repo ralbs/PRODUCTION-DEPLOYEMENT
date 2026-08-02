@@ -1,6 +1,7 @@
 const express = require("express");
 const Telemetry = require("../models/Telemetry");
 const { calculateAQI } = require("../lib/aqi");
+const { preparePollutants } = require("../lib/prepare");
 
 const router = express.Router();
 
@@ -14,7 +15,8 @@ router.get("/latest", async (req, res) => {
     .lean();
   if (!doc) return res.status(404).json({ error: "No telemetry found for this station" });
 
-  const aqi = calculateAQI(doc.pollutants);
+  const pollutants = await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
+  const aqi = calculateAQI(pollutants);
   res.json({ timestamp: doc.timestamp, station_id, ...aqi });
 });
 
@@ -36,10 +38,11 @@ router.get("/history", async (req, res) => {
     .limit(Math.min(Number(limit) || 500, 5000))
     .lean();
 
-  const series = docs.map((d) => ({
-    timestamp: d.timestamp,
-    ...calculateAQI(d.pollutants),
-  }));
+  const series = [];
+  for (const d of docs) {
+    const pollutants = await preparePollutants(d.pollutants, d.diagnostics, d.meta.device_id);
+    series.push({ timestamp: d.timestamp, ...calculateAQI(pollutants) });
+  }
 
   res.json(series);
 });
