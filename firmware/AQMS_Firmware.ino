@@ -93,7 +93,6 @@ void syncTimeFromModem() {
   
   int qh   = dt.substring(17).toInt();
   time_t utc = mktime(&t) - (long)qh * 15 * 60;
-
   struct timeval tv = { .tv_sec = utc };
   settimeofday(&tv, nullptr);
   Serial.println("[INFO] ESP32 time synced from modem RTC.");
@@ -413,11 +412,12 @@ float estimatePPM(float vNow, float vBaseline, float a, float b, float vc) {
   return ppm < 0 ? 0 : round(ppm * 10) / 10.0;
 }
 
-// ppm → µg/m³ at 25°C / 1 atm. mw <= 0 means a unitless proxy channel (e.g.
-// MQ-135 air-quality index) — returned as-is with no scaling.
+// ppm → µg/m³ at 25°C / 1 atm. Standard formula: mg/m³ = ppm·MW/24.45, so
+// µg/m³ = ppm·MW·1000/24.45 (e.g. 1 ppm NO₂ ≈ 1881 µg/m³). mw <= 0 means a
+// unitless proxy channel (e.g. MQ-135 air-quality index) — returned as-is.
 float ppmToUgm3(float ppm, float mw) {
   if (mw <= 0) return ppm;
-  return ppm * mw / MOLAR_VOL_25C;
+  return ppm * mw * 1000.0f / MOLAR_VOL_25C;
 }
 
 // Frozen-channel check. Warns once on the transition so the serial log stays
