@@ -25,9 +25,10 @@ export const api = {
   estimatePlume: (body)              => post("/api/plume/estimate", { ...body, grid: true }),
 };
 
-// Unit conversion helpers (data is stored in ppm for gases)
+// Unit helpers — gases already arrive from the backend in µg/m³ (see
+// backend/lib/aqi.js units contract), so only CO needs scaling: µg/m³ → mg/m³.
 export const conv = {
-  no2_ugm3: (ppm) => ppm == null ? null : +(ppm * (46.0055 * 1000) / 24.45).toFixed(1),
-  o3_ugm3:  (ppm) => ppm == null ? null : +(ppm * (48.0 * 1000) / 24.45).toFixed(1),
-  co_mgm3:  (ppm) => ppm == null ? null : +(ppm * 28.01 / 24.45).toFixed(2),
+  no2_ugm3: (v) => v == null ? null : +(+v).toFixed(1),
+  o3_ugm3:  (v) => v == null ? null : +(+v).toFixed(1),
+  co_mgm3:  (v) => v == null ? null : +(v / 1000).toFixed(2),
 };

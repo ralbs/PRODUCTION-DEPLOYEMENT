@@ -242,9 +242,9 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
           {[
             { label: "PM2.5", value: p.pm2_5, unit: "µg/m³", who: 5, color: "#ef4444" },
             { label: "PM10",  value: p.pm10,  unit: "µg/m³", who: 15, color: "#f97316" },
-            { label: "NO₂",   value: p.no2 != null ? +(p.no2 * 46.0055 * 1000 / 24.45).toFixed(1) : null, unit: "µg/m³", who: 10, color: "#facc15" },
-            // { label: "O₃",    value: p.o3  != null ? +(p.o3  * 48.0 * 1000 / 24.45).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },  // disabled (hardware not connected)
-            { label: "CO",    value: p.co,     unit: "ppm",   who: null, color: "#38bdf8" },
+            { label: "NO₂",   value: p.no2 != null ? +(+p.no2).toFixed(1) : null, unit: "µg/m³", who: 10, color: "#facc15" },
+            // { label: "O₃",    value: p.o3 != null ? +(+p.o3).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },  // disabled (hardware not connected)
+            { label: "CO",    value: (p.mq7_co ?? p.co) != null ? +((p.mq7_co ?? p.co) / 1000).toFixed(2) : null, unit: "mg/m³", who: null, color: "#38bdf8" },
           ].map((item) => {
             const over = item.who && item.value > item.who * 3;
             return (

@@ -250,21 +250,21 @@ export function calcHBI(iriBefore, iriAfter) {
 // Master calculator — computes all available indices from raw pollutants
 // ─────────────────────────────────────────────────────────────────────────────
 export function computeAllIndices(pollutants, weather = {}, forecast = null, currentAQI = null) {
-  // PPM to µg/m³ at 25°C / 1 atm: mass_conc = ppm × (MW × 1000) / 24.45
-  const NO2_PPM_TO_UGM3 = 46.0055 * 1000 / 24.45;
-  const O3_PPM_TO_UGM3  = 48.0 * 1000 / 24.45;
-
+  // Pollutants already arrive in µg/m³ from the backend (NO2, O3) — no
+  // ppm conversion. CO channels are µg/m³; mg/m³ for CSI is derived below.
   const p = {
-    pm2_5: pollutants?.pm2_5,
-    pm10:  pollutants?.pm10,
-    no2:   pollutants?.no2 != null ? pollutants?.no2 * NO2_PPM_TO_UGM3 : null,
-    o3:    pollutants?.o3  != null ? pollutants?.o3  * O3_PPM_TO_UGM3  : null,
-    so2:   pollutants?.so2,
-    co:    pollutants?.co,
+    pm2_5:  pollutants?.pm2_5,
+    pm10:   pollutants?.pm10,
+    no2:    pollutants?.no2,
+    o3:     pollutants?.o3,
+    so2:    pollutants?.so2,
+    co:     pollutants?.co,
+    mq7_co: pollutants?.mq7_co,
   };
 
-  // Convert CO from ppm to mg/m³ for CSI: co_mg = co_ppm × 28.01 / 24.45
-  const co_mg = p.co != null ? p.co * 28.01 / 24.45 : 0;
+  // CO in mg/m³ for CSI: prefer MQ-7 (real CO channel), fall back to MiCS.
+  const co_ugm3 = p.mq7_co != null ? p.mq7_co : p.co;
+  const co_mg = co_ugm3 != null ? co_ugm3 / 1000 : 0;
 
   const crpResult = calcCRP(p);
   const iri       = calcIRI(crpResult.crp);
@@ -322,10 +322,9 @@ export function respiratoryRisk(rsi) {
 }
 
 export function cpmContribution(pollutants) {
-  const NO2_PPM_TO_UGM3 = 46.0055 * 1000 / 24.45;
-  const O3_PPM_TO_UGM3  = 48.0 * 1000 / 24.45;
-  const no2_ugm3 = (pollutants?.no2 || 0) * NO2_PPM_TO_UGM3;
-  const o3_ugm3  = (pollutants?.o3  || 0) * O3_PPM_TO_UGM3;
+  // NO2 / O3 already arrive in µg/m³ from the backend — no conversion.
+  const no2_ugm3 = pollutants?.no2 || 0;
+  const o3_ugm3  = pollutants?.o3  || 0;
   const so2      = pollutants?.so2 || 0;
 
   const pm25Contrib = CRP_BETAS.pm2_5 * (pollutants?.pm2_5 || 0);

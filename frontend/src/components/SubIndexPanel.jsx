@@ -5,7 +5,7 @@ const POLLUTANTS = [
   { key: "pm10",  label: "PM10",  unit: "µg/m³", max: 600, fmt: (v) => v?.toFixed(1) ?? "–" },
   { key: "no2",   label: "NO₂",   unit: "µg/m³", max: 400, fmt: (v) => conv.no2_ugm3(v) ?? "–" },
   // { key: "o3",    label: "O₃",    unit: "µg/m³", max: 400, fmt: (v) => conv.o3_ugm3(v) ?? "–" },  // disabled (hardware not connected)
-  { key: "co",    label: "CO",    unit: "mg/m³",  max: 50,  fmt: (v) => conv.co_mgm3(v) ?? "–" },
+  { key: "mq7_co", siKey: "co", label: "CO", unit: "mg/m³",  max: 50,  fmt: (v) => conv.co_mgm3(v) ?? "–" },
 ];
 
 function siColor(si) {
@@ -23,7 +23,7 @@ export default function SubIndexPanel({ pollutants, subIndices }) {
     <div className="si-bar-list">
       {POLLUTANTS.map((p) => {
         const raw = pollutants?.[p.key];
-        const si  = subIndices?.[p.key];
+        const si  = subIndices?.[p.siKey ?? p.key];
         const displayVal = p.fmt(raw);
         const numVal = typeof displayVal === "number" ? displayVal : parseFloat(displayVal);
         const pct = !isNaN(numVal) ? Math.min((numVal / p.max) * 100, 100) : 0;
