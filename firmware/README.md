@@ -40,14 +40,23 @@ MQ- and MICS-series sensors output a voltage, not a ppm value — you need a
 clean-air baseline (R0) to compare against, run through each gas's
 datasheet Rs/Ro-vs-ppm curve.
 
-- On first boot (no stored baseline), the firmware warms up for
-  `RECALIBRATION_WARMUP_MS` (default 60s — MQ sensors typically want much
-  longer, 24–48h, for a *true* first calibration; treat the first day's
-  ppm numbers as provisional) then captures a baseline.
+- On first boot (no stored baseline), the firmware schedules a baseline
+  capture after a non-blocking `RECALIBRATION_WARMUP_MS` warm-up (30 min
+  default) — telemetry keeps streaming while the sensors settle.
+- Serial Monitor commands (115200 baud, newline terminator):
+  - `CAL` — capture a new baseline after a 10 min warm-up. Use this in
+    known-clean air (e.g. overnight, windows shut) instead of relying on
+    boot or midnight captures.
+  - `WIPE` — delete the stored baseline (e.g. a corrupt R0 from a cold-start
+    capture) and re-calibrate after the full 30 min warm-up.
+  - `HELP` — print the command list.
 - Every night at `RECALIBRATION_HOUR:RECALIBRATION_MINUTE` (default
   00:00 local time, via NTP), it re-samples `RECALIBRATION_SAMPLES`
-  readings per sensor and stores the new baseline to LittleFS, so a reboot
-  right after midnight won't lose that day's calibration.
+  readings per sensor after a short settle and stores the new baseline to
+  LittleFS, so a reboot right after midnight won't lose that day's
+  calibration.
+- The captured baseline is printed to serial so you can sanity-check the R0
+  voltages before trusting the gas channels.
 - The voltage→ppm conversion in `estimatePPM()` uses each gas's datasheet
   log-linear curve; every gas channel is shipped in **µg/m³** (the backend's
   units contract) via `ppmToUgm3()` using the molar masses in `config.h`.

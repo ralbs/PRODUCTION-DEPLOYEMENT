@@ -56,6 +56,13 @@ struct GasChanState {
 };
 static GasChanState gasState[GAS_CH_COUNT];
 
+// ── Calibration scheduling ──
+// Baselines must be captured only after the sensors have settled. First boot,
+// the serial "CAL"/"WIPE" commands, and the midnight job all go through this
+// pending timer so the main loop keeps streaming telemetry during warm-up.
+static bool          calibrationPending = false;
+static unsigned long calibrationDueAt   = 0;
+
 // ---------------- Forward Declarations ----------------
 void  connectWiFi();
 bool  connectGPRS();
@@ -64,6 +71,8 @@ float adsToVoltage(Adafruit_ADS1115 &ads, uint8_t ch);
 float rsRatio(float vNow, float vBaseline, float vc = GAS_VC);
 float estimatePPM(float vNow, float vBaseline, float a, float b, float vc = GAS_VC);
 void  runCalibration();
+void  requestCalibration(unsigned long warmupMs);
+void  handleCommand(const String &cmd);
 void  loadBaselineFromFlash();
 void  checkMidnightCalibration();
 String buildTelemetryJSON();
@@ -167,9 +176,8 @@ void setup() {
 
   loadBaselineFromFlash();
   if (isnan(baseline.mq135) && (ads1Ok || ads2Ok)) {
-    Serial.println("[INFO] No stored baseline — warming up gas sensors for first calibration...");
-    delay(RECALIBRATION_WARMUP_MS);
-    runCalibration();
+    Serial.println("[INFO] No stored baseline — calibration scheduled after warm-up (telemetry keeps running).");
+    requestCalibration(RECALIBRATION_WARMUP_MS);
   }
 }
 
@@ -179,6 +187,19 @@ void loop() {
 
   wifiOk = (WiFi.status() == WL_CONNECTED);
   checkMidnightCalibration();
+
+  // Run a pending calibration once its warm-up window has elapsed.
+  if (calibrationPending && millis() >= calibrationDueAt) {
+    calibrationPending = false;
+    runCalibration();
+  }
+
+  // Serial Monitor commands: CAL / WIPE / HELP (115200 baud, newline terminated)
+  while (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.length()) handleCommand(cmd);
+  }
 
   // Periodic NTP re-sync to prevent clock drift
   static unsigned long lastNtpSync = 0;
@@ -311,6 +332,10 @@ PMSData readPMS() {
 // =====================================================================
 void runCalibration() {
   Serial.println("[INFO] Running sensor recalibration (baseline capture)...");
+  if (!ads1Ok && !ads2Ok) {
+    Serial.println("[WARN] No ADC present — skipping calibration.");
+    return;
+  }
 
   double sMQ135 = 0, sMQ131 = 0, sMQ136 = 0, sMQ7 = 0, sMQ8 = 0;
   double sNH3 = 0, sNO2 = 0;
@@ -344,7 +369,7 @@ void runCalibration() {
   // (indicates dirty air during calibration, not a valid clean-air reference)
   {
     MQBaseline stored;
-    File fCheck = LittleFS.open("/baseline.dat", "r");
+    File fCheck = LittleFS.open(BASELINE_FILE, "r");
     if (fCheck && fCheck.size() == sizeof(stored)) {
       fCheck.read((uint8_t *)&stored, sizeof(stored));
       fCheck.close();
@@ -367,17 +392,46 @@ void runCalibration() {
     }
   }
 
-  File f = LittleFS.open("/baseline.dat", "w");
+  File f = LittleFS.open(BASELINE_FILE, "w");
   if (f) {
     f.write((uint8_t *)&baseline, sizeof(baseline));
     f.close();
   }
+  Serial.printf("[INFO] New baseline — nh3:%.3f no2:%.3f mq135:%.3f mq131:%.3f mq136:%.3f mq7:%.3f mq8:%.3f V\n",
+                baseline.mics_nh3, baseline.mics_no2, baseline.mq135,
+                baseline.mq131, baseline.mq136, baseline.mq7, baseline.mq8);
   Serial.println("[INFO] Calibration complete.");
 }
 
+// Schedule a baseline capture after a sensor-settle warm-up. Non-blocking:
+// the main loop triggers runCalibration() once warmupMs elapses.
+void requestCalibration(unsigned long warmupMs) {
+  calibrationPending = true;
+  calibrationDueAt = millis() + warmupMs;
+}
+
+// Serial Monitor commands (115200 baud, newline terminator):
+//   CAL   — recalibrate gas baselines after a 10 min warm-up
+//   WIPE  — delete the stored baseline and recalibrate after a 30 min warm-up
+//   HELP  — print this list
+void handleCommand(const String &cmd) {
+  if (cmd == "CAL" || cmd == "cal") {
+    Serial.printf("[INFO] Manual calibration scheduled after %lu ms warm-up.\n", (unsigned long)MANUAL_CAL_WARMUP_MS);
+    requestCalibration(MANUAL_CAL_WARMUP_MS);
+  } else if (cmd == "WIPE" || cmd == "wipe") {
+    Serial.println("[INFO] Wiping stored baseline — recalibrating...");
+    LittleFS.remove(BASELINE_FILE);
+    requestCalibration(RECALIBRATION_WARMUP_MS);
+  } else if (cmd == "HELP" || cmd == "help") {
+    Serial.println("[CMD] CAL   — recalibrate gas baselines (10 min warm-up)");
+    Serial.println("[CMD] WIPE  — delete baseline.dat and recalibrate (30 min warm-up)");
+    Serial.println("[CMD] HELP  — this list");
+  }
+}
+
 void loadBaselineFromFlash() {
-  if (!LittleFS.exists("/baseline.dat")) return;
-  File f = LittleFS.open("/baseline.dat", "r");
+  if (!LittleFS.exists(BASELINE_FILE)) return;
+  File f = LittleFS.open(BASELINE_FILE, "r");
   if (!f || f.size() != sizeof(baseline)) { if (f) f.close(); return; }
   f.read((uint8_t *)&baseline, sizeof(baseline));
   f.close();
@@ -391,8 +445,11 @@ void checkMidnightCalibration() {
   if (t.tm_hour == RECALIBRATION_HOUR &&
       t.tm_min  == RECALIBRATION_MINUTE &&
       t.tm_mday != lastRecalDay) {
-    runCalibration();
     lastRecalDay = t.tm_mday;
+    if (!calibrationPending) {
+      Serial.println("[INFO] Midnight calibration scheduled (warm-up)...");
+      requestCalibration(MIDNIGHT_CAL_WARMUP_MS);
+    }
   }
 }
 

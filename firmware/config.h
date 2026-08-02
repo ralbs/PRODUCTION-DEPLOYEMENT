@@ -92,7 +92,13 @@
 #define TELEMETRY_INTERVAL_MS     60000UL   // 1 minute
 #define RECALIBRATION_HOUR        0         // 12 AM local time
 #define RECALIBRATION_MINUTE      0
-#define RECALIBRATION_WARMUP_MS   60000UL    // sensor settle time before first baseline
+// Sensor settle time before capturing a baseline. First boot has no stored
+// baseline, so its warm-up runs non-blocking (telemetry keeps flowing) for
+// RECALIBRATION_WARMUP_MS. MQ/MiCS sensors need a long settle — this is a
+// minimum; prefer the serial "CAL" command in known-clean air.
+#define RECALIBRATION_WARMUP_MS   1800000UL // 30 min, first boot / WIPE
+#define MANUAL_CAL_WARMUP_MS      600000UL  // 10 min, serial "CAL"
+#define MIDNIGHT_CAL_WARMUP_MS    60000UL   // 1 min, sensors already hot at 00:00
 #define RECALIBRATION_SAMPLES     30
 
 // ============ NTP ============
@@ -119,3 +125,4 @@
 
 // ============ Offline buffering ============
 #define OFFLINE_BUFFER_FILE   "/buffer.jsonl"
+#define BASELINE_FILE         "/baseline.dat"
