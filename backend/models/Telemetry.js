@@ -52,9 +52,17 @@ const telemetrySchema = new mongoose.Schema(
     },
 
     health: {
-      mq135: String,
+      mq_ads1: String,
+      mq_ads2: String,
       pms5003: String,
-      dht22: String,
+      bme680: String,
+    },
+
+    // Raw calibration aid sent by the firmware: per-channel ADC voltages and
+    // the stored baselines. Not used for AQI — consumed via /api/telemetry/raw.
+    diagnostics: {
+      type: mongoose.Schema.Types.Mixed,
+      default: undefined,
     },
 
     flags: {

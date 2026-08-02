@@ -60,9 +60,11 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
     return res.status(403).json({ error: "device_id does not match authenticated device" });
   }
 
-  // Sensor faults are stored as null (never -1), so downstream metrics and
-  // aggregations never see the firmware's sentinel values.
-  const pollutants = sanitizePollutants(body.pollutants);
+  // Store the payload's pollutants exactly as the board sent them — the raw
+  // values are the diagnostic source of truth for calibration. Every read
+  // path applies sanitizePollutants() (garbage/disabled channels are nulled
+  // there), so nothing unsanitized ever reaches the AQI or the dashboard.
+  const pollutants = body.pollutants;
 
   // Health alert flag: surface FAULT channels in the response + console so the
   // ESP32 can log it and ops can spot a failing sensor immediately.
@@ -84,6 +86,7 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
       battery: body.battery,
       signal: body.signal,
       health: body.health,
+      diagnostics: body.diagnostics,
       flags: body.flags,
     });
 
@@ -141,6 +144,46 @@ router.get("/history", async (req, res) => {
     .lean();
 
   res.json(docs.map((d) => ({ ...d, pollutants: sanitizePollutants(d.pollutants), aqi: calculateAQI(d.pollutants) })));
+});
+
+// -------------------------------------------------------------------
+// GET /api/telemetry/raw?station_id=...&limit=... — calibration/diagnostics
+// -------------------------------------------------------------------
+// Returns pollutants exactly as stored (UNsanitized, sentinel values intact).
+// The dashboard must NOT use this endpoint — it exists so the calibration
+// workflow can compare the board's raw output against a reference.
+router.get("/raw", async (req, res) => {
+  const { device_id, station_id, from, to, limit = 50 } = req.query;
+  const idField = device_id ? "meta.device_id" : "meta.station_id";
+  const idValue = device_id || station_id;
+  if (!idValue) {
+    return res.status(400).json({ error: "device_id (or station_id) query param required" });
+  }
+
+  const query = { [idField]: idValue };
+  if (from || to) {
+    query.timestamp = {};
+    if (from) query.timestamp.$gte = new Date(from);
+    if (to) query.timestamp.$lte = new Date(to);
+  }
+
+  const docs = await Telemetry.find(query)
+    .sort({ timestamp: -1 })
+    .limit(Math.min(Number(limit) || 50, 1000))
+    .select("timestamp meta.location pollutants weather health diagnostics flags")
+    .lean();
+
+  res.json(docs.map((d) => ({
+    timestamp: d.timestamp,
+    device_id: d.meta.device_id,
+    station_id: d.meta.station_id,
+    location: d.location,
+    pollutants: d.pollutants,
+    weather: d.weather,
+    health: d.health,
+    diagnostics: d.diagnostics,
+    flags: d.flags,
+  })));
 });
 
 module.exports = router;

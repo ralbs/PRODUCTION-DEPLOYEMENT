@@ -78,6 +78,13 @@ and logs a warning. The dashboard can use `alert.hasFault` to surface
 - `GET /api/telemetry/latest?device_id=ESP32-001` — most recent reading for a
   device (`station_id` also accepted for backwards compatibility).
 - `GET /api/telemetry/history?device_id=ESP32-001&from=...&to=...&limit=500` — range query.
+- `GET /api/telemetry/raw?device_id=ESP32-001&from=...&to=...&limit=50` —
+  calibration aid: returns readings **exactly as stored**, with pollutants
+  unsanitized and the firmware `diagnostics` block included. Never use for
+  AQI; use it to inspect raw ADC voltages/baselines while calibrating.
+  `limit` defaults to 50 and caps at 1000. Reading routes with no
+  `from`/`to` filter are capped at 24h.
+- `GET /health` — uptime, DB state, and a summary of recent device readings.
 
 ### Ingest example
 ```bash
