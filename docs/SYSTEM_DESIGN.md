@@ -74,13 +74,16 @@ flowchart LR
 | PM1 / PM2.5 / PM10 | PMS5003 | ✅ trusted | genuine laser particle counts, verified live |
 | temperature / humidity / pressure | BME680 | ✅ trusted | verified live |
 | wifi_rssi | ESP32 | ✅ trusted | verified live |
-| NO₂ | MICS-6814 OX | ⚠️ frozen | raw ADC voltage does not move (`STUCK_DEADBAND_V`) — reports FAULT (`-1`) |
-| NH₃ | MICS-6814 RED | ⚠️ frozen | previously stuck at ~741,658 — now FAULT (`-1`) |
-| O₃ | MQ-131 | ⚠️ frozen | previously stuck at ~11,386 — now FAULT (`-1`) |
-| CO | MICS-6814 RED | ❌ disabled | pin not connected on PCB — always `-1` |
-| H₂S / H₂ / MQ-135 / MQ-7 CO | MQ-136 / MQ-8 / MQ-135 / MQ-7 | ⚠️ uncalibrated | values change but curve is placeholder; excluded until calibrated |
+| CO (`mq7_co`) | MQ-7 | 🔧 calibratable | the only gas channel with real signal range (ratio 0.68–1.28) **and** a KSPCB reference. Calibrated server-side by `scripts/fit-co.js`; trusted only once it appears in `TRUSTED_GAS_CHANNELS` |
+| NO₂ | MICS-6814 OX | ❌ never | raw ratio is stuck in a ±10 % noise band around 1.0 — signal-to-noise too poor to fit. Stays nulled permanently |
+| NH₃ | MICS-6814 RED | ❌ never | same problem as NO₂ (ratio ≈ 1.00 ± 0.02) |
+| O₃ | MQ-131 | ❌ hardware fault | module output pinned near ground (0.021 V, no response) — firmware ships `-1` unconditionally (`ENABLE_GAS_O3 0`) until the module is replaced |
+| CO (`co`) | MICS-6814 RED | ❌ disabled | pin not connected on PCB — always `-1` |
+| H₂S / H₂ / MQ-135 | MQ-136 / MQ-8 / MQ-135 | ⚠️ trend-only | values move but there is **no reference** to fit against (KSPCB has SO₂, not H₂S; no H₂; MQ-135 is a generic AQ proxy) |
 
-**Consequence:** with `TRUST_GAS_SENSORS=false` (default) the AQI is computed from PM only (~35–40, Good). Gas channels only enter the AQI after the calibration workflow below.
+**Trust model:** per-channel, via `TRUSTED_GAS_CHANNELS` env (comma-separated pollutant keys). With it empty (default) the AQI is PM-only (~35–40, Good). A channel only enters the AQI after (a) a saved calibration and (b) explicit opt-in.
+
+**Verdict:** of the seven gas channels, exactly one — MQ-7 CO — is worth calibrating. The rest are excluded for hardware or signal-to-noise reasons, not laziness.
 
 ---
 
@@ -98,11 +101,12 @@ ADS1115 #2 ch1       ──► vMQ7   (CO)              │
 ADS1115 #2 ch2       ──► vMQ8   (H₂)              ─┘
 ```
 
-Each gas channel passes through three guards in `gasUgm3()`:
+Each gas channel passes through four guards in `gasUgm3()`:
 
 1. **Availability** — ADC I²C dead or channel not present → `-1`.
 2. **Rs/Ro operating range** — `rsRatio()` must fall in `RATIO_MIN..RATIO_MAX` (0.02–20.0). The log-log datasheet fits extrapolate to absurd values outside this window (that produced O₃ ≈ 11,000 and NH₃ ≈ 741,000); out-of-range → `-1`.
-3. **Stuck-channel** — if the raw voltage stays within `STUCK_DEADBAND_V` (1 mV) across `STUCK_SAMPLES` (5) consecutive cycles, the channel is frozen (dead sensor / open trace) and reports `-1` with a one-time serial warning.
+3. **Below-detection floor** — near Rs/Ro ≈ 1.0 the datasheet power-law is *not defined*: even with a perfect baseline it extrapolates to hundreds of ppm in clean air (CO ≈ 99 ppm, NH₃ ≈ 102 ppm, H₂ ≈ 977 ppm — the residual garbage seen after recalibration). A channel with `|ratio − 1| < DETECT_RATIO_NEAR_1` (0.20) reports **0** = measured, below detection.
+4. **Stuck-channel** — if the raw voltage stays within `STUCK_DEADBAND_V` (1 mV) across `STUCK_SAMPLES` (15) consecutive cycles, the channel is frozen (dead sensor / open trace) and reports `-1` with a one-time serial warning. 15 (not 5) because slow MQ/MiCS channels legitimately sit flat for minutes.
 
 The payload also carries a **`diagnostics`** block — raw `ads1_voltages`/`ads2_voltages` per channel and the stored `baselines` — so calibration can inspect the board's true electrical state. `diagnostics` is persisted but never used for AQI.
 
@@ -118,7 +122,7 @@ The payload also carries a **`diagnostics`** block — raw `ads1_voltages`/`ads2
 
 ### GET /api/telemetry/latest & /history
 - Query by `device_id` or `station_id` (dynamic field).
-- **Every read applies `sanitizePollutants()` then `calculateAQI()`** — so the AQI is always correct even for historical garbage rows, and `TRUST_GAS_SENSORS=false` nulls gas channels before AQI math.
+- **Every read runs `preparePollutants()`** — `applyCalibration()` (overwrite firmware gas placeholders with any stored per-device calibration) then `sanitizePollutants()` (null disabled/faulted channels and every gas channel not in `TRUSTED_GAS_CHANNELS`) — then `calculateAQI()`. The same pipeline feeds the AQI routes and the GraphQL resolvers, so the dashboard and AQI always agree.
 
 ### GET /api/telemetry/raw
 - Calibration-only: returns pollutants **unsanitized** plus the `diagnostics` block. Never used by the dashboard.
@@ -139,19 +143,41 @@ category     0–50 Good · 51–100 Satisfactory · 101–200 Moderate
              201–300 Poor · 301–400 Very Poor · 401–500 Severe
 ```
 
-With `TRUST_GAS_SENSORS=false`, the gas set is empty → AQI is max of the PM sub-indices only.
+With an empty `TRUSTED_GAS_CHANNELS`, the gas set is empty → AQI is max of the PM sub-indices only.
 
 ---
 
 ## 7. Calibration workflow (gas sensors)
 
-Goal: turn the four in-range-but-rough gas channels into trustworthy µg/m³, validated against the KSPCB reference data already in the DB (`KSPCB-*` stations, seeded via `backend/scripts/seed-kspcb.js`).
+Goal: turn the MQ-7 CO channel into trustworthy µg/m³. Only CO is calibratable —
+the other gas channels are excluded for hardware / signal-to-noise reasons (see §3).
 
-1. **Collect raw diagnostics** — with the reflashed firmware (µg/m³ + guards + `diagnostics`), poll `GET /api/telemetry/raw?device_id=ESP32-001&from=...` for a full clean-air period (24–48 h).
-2. **Confirm channels move** — a usable channel's `ads*_voltages` must vary well beyond `STUCK_DEADBAND_V`. Frozen channels (currently NO₂, NH₃, O₃) are electrical problems, not curve problems: re-check the header/jumper/pin assignments before calibrating them.
-3. **Baseline** — delete `/baseline.dat` on the board so R0 is re-captured in clean air; let it settle (MQ sensors want 24–48 h warm-up before a *true* R0).
-4. **Curve fit** — replace the placeholder `GAS_A_*`/`GAS_B_*` coefficients with datasheet or gas-chamber fits; verify the resulting µg/m³ tracks the KSPCB station nearest the deployment within an agreed tolerance.
-5. **Enable** — set `TRUST_GAS_SENSORS=true` in the backend env only after the raw→µg/m³ values look physically plausible on the dashboard.
+### Baseline (firmware, on-board)
+1. **Warm-up** — MQ/MiCS sensors need to settle. First boot runs a 30-min non-blocking warm-up before capturing R0; serial `CAL` uses 10 min; the midnight job uses 1 min (sensors already hot).
+2. **Baseline** — serial `WIPE` deletes `/baseline.dat` and re-captures R0 after a 30-min warm-up in known-clean air. The 50 %-drift sanity guard rejects a capture taken in dirty air.
+3. **Below-detection** — with a valid baseline, any channel near Rs/Ro ≈ 1.0 reports `0` (below detection) instead of the datasheet power-law's clean-air garbage.
+
+### CO scale calibration (backend, KSPCB fit)
+The firmware ships `mq7_co` from datasheet coefficients that are orders of magnitude off. `backend/scripts/fit-co.js` fits a per-device power law
+
+```
+ppm = a · ratio^b        (ratio = Rs/R0, recomputed from diagnostics voltage + baseline)
+```
+
+against the KSPCB reference already in the DB. **Because the KSPCB data is historical (2018–2023) and the device is live, timestamps never overlap**, so the script fits the *diurnal climatology*: the device's hour-of-day mean ratio vs the nearest KSPCB station's hour-of-day mean CO. This anchors scale to typical urban CO but is **not** a same-place, same-time calibration — expect a rough fit (reference station is ~100 km away in Bangalore).
+
+Acceptance bar (all required, else nothing is saved):
+- ≥ `MIN_HOURS` (12) of device hour-of-day coverage
+- log-log `R² ≥ 0.25`
+- physically-sane negative exponent `−20 < b < −0.5`
+
+A passing fit writes a `Calibration` doc (`calibrations` collection): `model {a,b}`, `validRatioMin/Max`, `metrics {r2, mae, n}`. Every read path (`lib/prepare.js` → `lib/gasCal.js`) then replaces the firmware's `mq7_co` with the fitted value, and nulls it whenever the ratio falls outside the fitted window.
+
+### Enable
+Set `TRUSTED_GAS_CHANNELS=mq7_co` in the backend env **only after** a fit has been saved and the resulting room-air readings look plausible. All other gas channels are never trusted.
+
+### Future upgrade (gold standard)
+A **span-gas bump test** (certified CO can, e.g. 50 ppm) would give a true two-point calibration: a serial `CALCO <ppm>` command that samples the sensor under the can and solves the curve directly. This is standard practice for CO monitors and would make the fitted curve rigorous instead of statistical. The `Calibration` model already supports storing it — only the firmware `CALCO` command and the physical can are missing.
 
 ---
 
@@ -175,6 +201,8 @@ flowchart LR
 ## 9. Open items
 
 1. Frontend deployment host — dashboard fix (commit `3a92890`) is built but not live anywhere.
-2. Fresh serial payload from the reflashed board to confirm the µg/m³ + guards behave before a long calibration soak.
-3. PCB verification of the frozen channels (NO₂ / NH₃ / O₃) — stuck voltage at the ADC suggests a hardware/assumed-pinmap issue, not a calibration issue.
-4. Root `README.md` diagrams still describe the pre-refactor system (ppm storage, old schema) and should be brought in line with this document.
+2. Reflash the board with the below-detection floor + `ENABLE_GAS_O3 0` firmware, then let it soak so `scripts/fit-co.js` has enough hour-of-day coverage for a CO calibration.
+3. Run `scripts/cleanup-1970.js` on the live DB to purge the pre-NTP 1970-timestamp rows.
+4. Replace the dead MQ-131 (O₃) module if O₃ is ever wanted — the channel is permanently faulted until then.
+5. Root `README.md` diagrams still describe the pre-refactor system (ppm storage, old schema) and should be brought in line with this document.
+6. Optional rigor upgrade: span-gas can (50 ppm CO) + `CALCO` firmware command for a true two-point CO calibration.
