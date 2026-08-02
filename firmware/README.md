@@ -31,9 +31,9 @@ Two schema fields also don't map 1:1 to the hardware as drawn:
   which is *not* a certified ppm reading. For real CO2 data, add an NDIR
   sensor (MH-Z19, SCD30, etc.) and read it directly — swap in that value
   where `estimateCO2FromGasResistance()` is called.
-- **`health.dht22`** — the board uses a BME680, not a DHT22. The firmware
-  reports the BME680's read status under that same JSON key so your
-  backend/schema doesn't need to change.
+- **`health`** — the board uses a BME680, not a DHT22. The firmware reports
+  the BME680's read status under `health.bme680` (along with `mq_ads1`,
+  `mq_ads2`, `pms5003`), so the health fields are `"OK"` or `"FAULT"`.
 
 ## How calibration works
 MQ- and MICS-series sensors output a voltage, not a ppm value — you need a
@@ -48,9 +48,17 @@ datasheet Rs/Ro-vs-ppm curve.
   00:00 local time, via NTP), it re-samples `RECALIBRATION_SAMPLES`
   readings per sensor and stores the new baseline to LittleFS, so a reboot
   right after midnight won't lose that day's calibration.
-- The voltage→ppm conversion in `estimatePPM()` is a placeholder
-  log-linear model. Replace the `sensitivity`/exponent per sensor once you
-  have real datasheet curve-fit values or a gas-chamber calibration run.
+- The voltage→ppm conversion in `estimatePPM()` uses each gas's datasheet
+  log-linear curve; every gas channel is shipped in **µg/m³** (the backend's
+  units contract) via `ppmToUgm3()` using the molar masses in `config.h`.
+- A channel is reported as `-1` (fault) when its ADC is unavailable, its
+  `Rs/Ro` ratio falls outside `RATIO_MIN..RATIO_MAX` (curve out of range), or
+  its raw voltage stays within `STUCK_DEADBAND_V` for `STUCK_SAMPLES`
+  consecutive minutes (frozen ADC — dead sensor / open trace).
+- Every payload also carries a `diagnostics` block (raw ADC voltages per
+  channel + stored baselines) to be consumed via the backend's
+  `GET /api/telemetry/raw` — never used for AQI. Use it to confirm channels
+  actually move before trusting a calibrated curve.
 
 ## Connectivity & offline buffering
 WiFi is primary; if it's unreachable at boot or a send fails, the firmware

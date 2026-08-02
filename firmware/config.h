@@ -54,6 +54,31 @@
 #define GAS_A_CO           99.042f
 #define GAS_B_CO           -1.518f
 
+// ============ Gas units & sanity guards ============
+// The telemetry API units contract: gases are stored in µg/m³. The firmware
+// converts ppm → µg/m³ using the molar volume at 25°C / 1 atm (24.45 L/mol).
+#define MOLAR_VOL_25C      24.45f
+#define MW_NH3             17.031f
+#define MW_NO2             46.0055f
+#define MW_O3              48.00f
+#define MW_H2S             34.08f
+#define MW_H2              2.016f
+#define MW_CO              28.01f
+
+// rsRatio operating-range clamp. The log-log datasheet fits are only defined
+// over a bounded Rs/RO range; outside it the power-law extrapolates to absurd
+// values (that is what produced O3 ~11,000 and NH3 ~740,000). Out-of-range
+// ratios are treated as a sensor fault (-1).
+#define RATIO_MIN          0.02f
+#define RATIO_MAX          20.0f
+
+// Stuck-channel detection: a gas channel whose raw ADC voltage stays within
+// STUCK_DEADBAND_V across STUCK_SAMPLES consecutive minute-readings is frozen
+// (dead sensor / broken ADC path) and reported as FAULT instead of a constant
+// fake reading.
+#define STUCK_DEADBAND_V   0.001f
+#define STUCK_SAMPLES      5
+
 // ============ PMS5003 — Serial1 ============
 #define PMS_RX_PIN        25   // ESP32 RX <- PMS5003 TX
 #define PMS_TX_PIN        26   // ESP32 TX -> PMS5003 RX

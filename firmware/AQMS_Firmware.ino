@@ -44,6 +44,18 @@ struct MQBaseline {
 MQBaseline baseline;
 PMSData cachedPMS;
 
+// ── Gas channel stuck-detection state ──
+// Each analog gas channel is read once per telemetry cycle. If a channel's raw
+// voltage never moves beyond STUCK_DEADBAND_V for STUCK_SAMPLES consecutive
+// minutes it is treated as frozen (dead sensor / open ADC path) and the field
+// is sent as -1 instead of a constant fake reading.
+enum GasCh { CH_NH3, CH_NO2, CH_MQ135, CH_MQ131, CH_MQ136, CH_MQ7, CH_MQ8, GAS_CH_COUNT };
+struct GasChanState {
+  float  lastVolt = NAN;
+  uint8_t frozen  = 0;
+};
+static GasChanState gasState[GAS_CH_COUNT];
+
 // ---------------- Forward Declarations ----------------
 void  connectWiFi();
 bool  connectGPRS();
@@ -387,7 +399,11 @@ void checkMidnightCalibration() {
 
 float rsRatio(float vNow, float vBaseline, float vc) {
   if (vBaseline <= 0.01 || vBaseline >= vc || vNow <= 0.01 || vNow >= vc) return NAN;
-  return ((vc - vNow) * vBaseline) / (vNow * (vc - vBaseline));
+  float ratio = ((vc - vNow) * vBaseline) / (vNow * (vc - vBaseline));
+  // Outside the datasheet curve's valid operating range the power-law fit
+  // extrapolates to absurd values — treat as a sensor fault instead.
+  if (ratio < RATIO_MIN || ratio > RATIO_MAX) return NAN;
+  return ratio;
 }
 
 float estimatePPM(float vNow, float vBaseline, float a, float b, float vc) {
@@ -397,11 +413,46 @@ float estimatePPM(float vNow, float vBaseline, float a, float b, float vc) {
   return ppm < 0 ? 0 : round(ppm * 10) / 10.0;
 }
 
+// ppm → µg/m³ at 25°C / 1 atm. mw <= 0 means a unitless proxy channel (e.g.
+// MQ-135 air-quality index) — returned as-is with no scaling.
+float ppmToUgm3(float ppm, float mw) {
+  if (mw <= 0) return ppm;
+  return ppm * mw / MOLAR_VOL_25C;
+}
+
+// Frozen-channel check. Warns once on the transition so the serial log stays
+// readable while the channel keeps reporting FAULT.
+bool isChannelStuck(GasCh ch, float vNow) {
+  GasChanState &s = gasState[ch];
+  if (isnan(s.lastVolt)) { s.lastVolt = vNow; return false; }
+  bool frozen = fabs(vNow - s.lastVolt) <= STUCK_DEADBAND_V;
+  s.lastVolt = vNow;
+  if (frozen) {
+    if (s.frozen < 255) s.frozen++;
+    if (s.frozen == STUCK_SAMPLES) {
+      Serial.printf("[WARN] Gas channel %d frozen at %.4f V — reporting FAULT\n", ch, vNow);
+    }
+    return s.frozen >= STUCK_SAMPLES;
+  }
+  s.frozen = 0;
+  return false;
+}
+
+// One gas channel → µg/m³ (or raw proxy value), or -1 on any fault:
+// unavailable ADC, ratio outside operating range, or a frozen channel.
+float gasUgm3(float vNow, float vBaseline, float a, float b, float mw, GasCh ch) {
+  if (isnan(vNow) || isnan(vBaseline)) return -1;
+  if (isChannelStuck(ch, vNow)) return -1;
+  float ppm = estimatePPM(vNow, vBaseline, a, b);
+  if (ppm < 0) return -1;
+  return ppmToUgm3(ppm, mw);
+}
+
 // =====================================================================
 // Payload Builder & Exporter
 // =====================================================================
 String buildTelemetryJSON() {
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<2048> doc;
 
   doc["device_id"]  = DEVICE_ID;
   doc["station_id"] = STATION_ID;
@@ -434,21 +485,51 @@ String buildTelemetryJSON() {
   pollutants["pm1"]     = pms.pm1;
   pollutants["pm2_5"]   = pms.pm2_5;
   pollutants["pm10"]    = pms.pm10;
-  
-  // MiCS-6814 channels (on ADS1115 #1)
-  pollutants["co"]      = -1;  // MiCS-6814 CO (RED) pin not connected on PCB
-  pollutants["no2"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NO2_MICS),   baseline.mics_no2,  GAS_A_NO2,   GAS_B_NO2)   : -1;
-  pollutants["nh3"]     = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_NH3_MICS),   baseline.mics_nh3,  GAS_A_NH3,   GAS_B_NH3)   : -1;
 
-  // MQ-series channels
-  pollutants["o3"]      = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ131_AOUT), baseline.mq131,     GAS_A_O3,    GAS_B_O3)    : -1;
-  pollutants["mq135"]   = ads1Ok ? estimatePPM(adsToVoltage(ads1, CH_MQ135_AOUT), baseline.mq135,     GAS_A_MQ135, GAS_B_MQ135) : -1;
-  pollutants["h2s"]     = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ136_AOUT), baseline.mq136,     GAS_A_H2S,   GAS_B_H2S)   : -1;
-  pollutants["h2"]      = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ8_AOUT),   baseline.mq8,       GAS_A_H2,    GAS_B_H2)    : -1;
-  pollutants["mq7_co"]  = ads2Ok ? estimatePPM(adsToVoltage(ads2, CH_MQ7_AOUT),   baseline.mq7,       GAS_A_CO,    GAS_B_CO)    : -1;
+  // Read each analog gas channel once per cycle; the voltage is reused for the
+  // ppm estimate AND the diagnostics block below (calibration aid).
+  float vNH3   = ads1Ok ? adsToVoltage(ads1, CH_NH3_MICS)   : NAN;
+  float vNO2   = ads1Ok ? adsToVoltage(ads1, CH_NO2_MICS)   : NAN;
+  float vMQ135 = ads1Ok ? adsToVoltage(ads1, CH_MQ135_AOUT) : NAN;
+  float vMQ131 = ads1Ok ? adsToVoltage(ads1, CH_MQ131_AOUT) : NAN;
+  float vMQ136 = ads2Ok ? adsToVoltage(ads2, CH_MQ136_AOUT) : NAN;
+  float vMQ7   = ads2Ok ? adsToVoltage(ads2, CH_MQ7_AOUT)   : NAN;
+  float vMQ8   = ads2Ok ? adsToVoltage(ads2, CH_MQ8_AOUT)   : NAN;
+
+  // All gases are shipped in µg/m³ (backend units contract). -1 = fault.
+  // MiCS-6814 CO (RED) pin is not connected on this PCB — always faulted.
+  pollutants["co"]      = -1;
+  pollutants["no2"]     = gasUgm3(vNO2,   baseline.mics_no2, GAS_A_NO2,   GAS_B_NO2,   MW_NO2, CH_NO2);
+  pollutants["nh3"]     = gasUgm3(vNH3,   baseline.mics_nh3, GAS_A_NH3,   GAS_B_NH3,   MW_NH3, CH_NH3);
+  pollutants["o3"]      = gasUgm3(vMQ131, baseline.mq131,    GAS_A_O3,    GAS_B_O3,    MW_O3,  CH_MQ131);
+  pollutants["mq135"]   = gasUgm3(vMQ135, baseline.mq135,    GAS_A_MQ135, GAS_B_MQ135, 0.0f,   CH_MQ135); // unitless proxy
+  pollutants["h2s"]     = gasUgm3(vMQ136, baseline.mq136,    GAS_A_H2S,   GAS_B_H2S,   MW_H2S, CH_MQ136);
+  pollutants["h2"]      = gasUgm3(vMQ8,   baseline.mq8,      GAS_A_H2,    GAS_B_H2,    MW_H2,  CH_MQ8);
+  pollutants["mq7_co"]  = gasUgm3(vMQ7,   baseline.mq7,      GAS_A_CO,    GAS_B_CO,    MW_CO,  CH_MQ7);
 
   // Raw gas resistance from BME680 (not a CO2 measurement)
   pollutants["voc_gas_ohm"] = readingOk ? bme.gas_resistance : 0;
+
+  // Diagnostics for the calibration workflow: raw ADC voltages + baselines.
+  // Consumed by GET /api/telemetry/raw; never used for AQI.
+  JsonObject diag = doc.createNestedObject("diagnostics");
+  JsonObject d1 = diag.createNestedObject("ads1_voltages");
+  d1["nh3"]   = ads1Ok ? vNH3   : -1;
+  d1["no2"]   = ads1Ok ? vNO2   : -1;
+  d1["mq135"] = ads1Ok ? vMQ135 : -1;
+  d1["mq131"] = ads1Ok ? vMQ131 : -1;
+  JsonObject d2 = diag.createNestedObject("ads2_voltages");
+  d2["mq136"] = ads2Ok ? vMQ136 : -1;
+  d2["mq7"]   = ads2Ok ? vMQ7   : -1;
+  d2["mq8"]   = ads2Ok ? vMQ8   : -1;
+  JsonObject bl = diag.createNestedObject("baselines");
+  bl["mics_nh3"] = baseline.mics_nh3;
+  bl["mics_no2"] = baseline.mics_no2;
+  bl["mq135"]    = baseline.mq135;
+  bl["mq131"]    = baseline.mq131;
+  bl["mq136"]    = baseline.mq136;
+  bl["mq7"]      = baseline.mq7;
+  bl["mq8"]      = baseline.mq8;
 
   JsonObject battery = doc.createNestedObject("battery");
   battery["voltage"] = 0;
