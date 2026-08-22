@@ -1,0 +1,65 @@
+{
+  "city_name": "Bangalore",
+  "domain": {
+    "lat_sw": 12.834,
+    "lon_sw": 77.470,
+    "nx": 54,
+    "ny": 54,
+    "dx": 500.0,
+    "dy": 500.0
+  },
+  "utc_offset_hours": 5.5,
+  "dt_seconds": 60,
+  "wind_history_hours": 24,
+
+  "species": {
+    "pm25": {"unit": "ug_m3", "v_dep_m_s": 5.0e-4, "background_conc": 15.0, "clim_max": 500},
+    "pm10": {"unit": "ug_m3", "v_dep_m_s": 5.0e-3, "background_conc": 35.0, "clim_max": 1000},
+    "co":   {"unit": "mg_m3", "v_dep_m_s": 1.0e-6, "background_conc": 1.0,  "clim_max": 30,
+             "notes": "CO in mg/m3 to match MQ-7/MH-Z19 sensor convention; every other species is ug/m3 -- convert explicitly at any boundary that compares species."},
+    "no2":  {"unit": "ug_m3", "v_dep_m_s": 2.0e-3, "background_conc": 10.0, "clim_max": 300},
+    "so2":  {"unit": "ug_m3", "v_dep_m_s": 8.0e-3, "background_conc": 5.0,  "clim_max": 200},
+    "bc":   {"unit": "ug_m3", "v_dep_m_s": 6.0e-4, "background_conc": 2.0,  "clim_max": 50}
+  },
+
+  "diurnal_profiles": {
+    "24h": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    "morning_evening": [0.2,0.15,0.10,0.10,0.15,0.30,0.70,1.20,1.50,1.30,1.00,0.90,
+                        0.85,0.80,0.80,0.85,1.10,1.40,1.50,1.30,1.00,0.70,0.50,0.30],
+    "daytime": [0,0,0,0,0,0.1,0.5,1.0,1.2,1.2,1.2,1.1,1.1,1.1,1.2,1.2,1.0,0.8,0.4,0.1,0,0,0,0],
+    "night": [1.5,1.8,1.8,1.5,1.2,0.8,0.4,0.2,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.2,0.3,0.5,0.8,1.0,1.2,1.4,1.5,1.5]
+  },
+
+  "emission_sources": [
+    {"name": "Outer Ring Road NE", "kind": "area", "profile": "morning_evening",
+     "lat_sw": 12.970, "lon_sw": 77.640, "lat_ne": 13.010, "lon_ne": 77.680,
+     "rates": {"pm25": 0.08, "pm10": 0.15, "co": 2.5, "no2": 0.10, "bc": 0.02}},
+    {"name": "Hosur Road Corridor", "kind": "area", "profile": "morning_evening",
+     "lat_sw": 12.880, "lon_sw": 77.600, "lat_ne": 12.940, "lon_ne": 77.640,
+     "rates": {"pm25": 0.07, "pm10": 0.12, "co": 2.0, "no2": 0.09, "bc": 0.018}},
+    {"name": "Peenya Industrial Area", "kind": "area", "profile": "daytime",
+     "lat_sw": 13.020, "lon_sw": 77.510, "lat_ne": 13.060, "lon_ne": 77.550,
+     "rates": {"pm25": 0.12, "so2": 0.25, "pm10": 0.20, "bc": 0.04, "co": 1.0}},
+    {"name": "Whitefield IT+Industry", "kind": "area", "profile": "daytime",
+     "lat_sw": 12.960, "lon_sw": 77.740, "lat_ne": 13.010, "lon_ne": 77.790,
+     "rates": {"pm25": 0.06, "so2": 0.10, "no2": 0.08, "co": 0.8}},
+    {"name": "North Bangalore Residential", "kind": "area", "profile": "night",
+     "lat_sw": 13.030, "lon_sw": 77.550, "lat_ne": 13.070, "lon_ne": 77.610,
+     "rates": {"pm25": 0.05, "co": 1.5, "bc": 0.03}}
+  ],
+
+  "sensors": [
+    {"id": "AQMS-01", "lat": 12.975, "lon": 77.60, "type": "SDS011",
+     "species_error_sigma": {"pm25": 8.0, "pm10": 10.0}},
+    {"id": "AQMS-02", "lat": 12.95,  "lon": 77.65, "type": "MiCS-6814",
+     "species_error_sigma": {"no2": 15.0, "co": 2.5}},
+    {"id": "AQMS-03", "lat": 13.00,  "lon": 77.55, "type": "ZE03-SO2",
+     "species_error_sigma": {"so2": 5.0}}
+  ],
+
+  "assimilation": {
+    "bg_error_fraction": 0.30,
+    "correlation_length_m": 5000,
+    "localisation_radius_m": 10000
+  }
+}

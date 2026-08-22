@@ -1,0 +1,46 @@
+{
+  "city_name": "GenericCity",
+  "_purpose": "Deliberately DIFFERENT from bangalore.json in every dimension that matters -- domain size, resolution, UTC offset, species subset -- to prove the config system is genuinely city-agnostic. If the loader or any downstream module fails or behaves oddly on this file while bangalore.json works, something is still hardcoded and must be fixed before Phase 1 is considered done.",
+
+  "domain": {
+    "lat_sw": 40.700,
+    "lon_sw": -74.020,
+    "nx": 40,
+    "ny": 30,
+    "dx": 1000.0,
+    "dy": 1000.0
+  },
+  "utc_offset_hours": -5.0,
+  "dt_seconds": 120,
+  "wind_history_hours": 12,
+
+  "species": {
+    "pm25": {"unit": "ug_m3", "v_dep_m_s": 5.0e-4, "background_conc": 8.0, "clim_max": 500},
+    "no2":  {"unit": "ug_m3", "v_dep_m_s": 2.0e-3, "background_conc": 12.0, "clim_max": 300},
+    "o3":   {"unit": "ug_m3", "v_dep_m_s": 5.0e-3, "background_conc": 40.0, "clim_max": 400,
+             "notes": "Included only to exercise the species-advisory path for a non-primary-emission species -- see inverse.py's species_advisory()."}
+  },
+
+  "diurnal_profiles": {
+    "24h": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    "rush_hour": [0.3,0.2,0.15,0.15,0.2,0.4,0.9,1.4,1.3,1.0,0.9,0.9,
+                  0.9,0.9,0.9,1.0,1.3,1.5,1.2,0.9,0.7,0.5,0.4,0.35]
+  },
+
+  "emission_sources": [
+    {"name": "Downtown Corridor", "kind": "area", "profile": "rush_hour",
+     "lat_sw": 40.705, "lon_sw": -74.015, "lat_ne": 40.720, "lon_ne": -74.000,
+     "rates": {"pm25": 0.05, "no2": 0.07}}
+  ],
+
+  "sensors": [
+    {"id": "GEN-01", "lat": 40.712, "lon": -74.006, "type": "reference",
+     "species_error_sigma": {"pm25": 3.0, "no2": 3.0}}
+  ],
+
+  "assimilation": {
+    "bg_error_fraction": 0.25,
+    "correlation_length_m": 8000,
+    "localisation_radius_m": 15000
+  }
+}
