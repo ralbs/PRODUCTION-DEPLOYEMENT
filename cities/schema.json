@@ -98,6 +98,16 @@
         "correlation_length_m": {"type": "number", "default": 5000},
         "localisation_radius_m": {"type": "number", "default": 10000}
       }
+    },
+    "climatology": {
+      "type": "object",
+      "description": "Per-city fallback met defaults used when no valid weather station reading is available.",
+      "properties": {
+        "default_wind_speed_m_s": {"type": "number", "minimum": 0, "default": 1.0},
+        "default_wind_dir_deg": {"type": "number", "minimum": 0, "maximum": 360, "default": 0.0},
+        "default_temp_c": {"type": "number", "default": 25.0},
+        "default_rh_pct": {"type": "number", "minimum": 0, "maximum": 100, "default": 60.0}
+      }
     }
   }
 }
