@@ -39,6 +39,7 @@ def _resolve_observations(city: CityConfig, grid: CTMGrid, species: str, observa
     counts = {
         "n_obs_rejected_nonfinite": 0,
         "n_obs_rejected_unknown_sensor": 0,
+        "n_obs_rejected_invalid_sigma": 0,
         "n_obs_rejected_out_of_domain": 0,
     }
 
@@ -50,10 +51,20 @@ def _resolve_observations(city: CityConfig, grid: CTMGrid, species: str, observa
             counts["n_obs_rejected_nonfinite"] += 1
             continue
 
+        # "unknown sensor" means the id isn't registered, or the sensor
+        # doesn't measure this species at all -- NOT a sensor that's known
+        # and measures this species but declares an unusable (non-finite,
+        # zero, or negative) obs-error sigma. Collapsing these into one
+        # counter previously mislabeled a real, valid sensor's rejection as
+        # if its id/species registration were the problem, which would
+        # mislead anyone debugging "why isn't my sensor's data being used."
         sensor = sensors_by_id.get(obs.sensor_id)
         sigma = None if sensor is None else sensor.species_error_sigma.get(species)
-        if sensor is None or sigma is None or not np.isfinite(sigma) or sigma <= 0:
+        if sensor is None or sigma is None:
             counts["n_obs_rejected_unknown_sensor"] += 1
+            continue
+        if not np.isfinite(sigma) or sigma <= 0:
+            counts["n_obs_rejected_invalid_sigma"] += 1
             continue
 
         x_m, y_m = grid.latlon_to_xy_m(sensor.lat, sensor.lon)

@@ -209,6 +209,89 @@ def test_identifiability_trap_single_snapshot_vs_multi_time_stacking():
     assert np.all(result_multi.marginal_std < result_snapshot.marginal_std / 3)
 
 
+def test_zero_true_emission_zone_recovered_near_zero_with_default_prior():
+    """Adversarial case: a zone that TRULY emits zero. With the default
+    weak/uninformative prior, the estimate should land near 0 within its
+    own posterior uncertainty -- not biased toward some spurious value."""
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.01})]
+    city = _make_city(background=0.0, sensors=sensors)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.06)  # truly zero
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 60
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [10.0] * n_steps
+    mixing_height_history = [500.0] * n_steps
+    x_true = np.array([2.0, 0.0])
+
+    time_indices = list(range(10, n_steps, 5))
+    obs_template = [InversionObservation(sensor_id="S1", time_index=t, enhancement=0.0) for t in time_indices]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    rng = np.random.default_rng(0)
+    y = H @ x_true + rng.normal(0, 0.01, size=H.shape[0])
+    observations = [InversionObservation(sensor_id="S1", time_index=t, enhancement=yy) for t, yy in zip(time_indices, y)]
+
+    result = inv.solve(H, observations)
+    print(f"\n[zero-emission zone] x_hat={result.x_hat}, marginal_std={result.marginal_std}, true={x_true}")
+    assert abs(result.x_hat[1]) <= 3 * result.marginal_std[1]
+
+
+def test_zero_variance_prior_raises_clear_error_not_bare_linalg_error():
+    """Adversarial case: Sx with an EXACT 0.0 variance on one zone's
+    diagonal -- a 'we are certain of this rate' prior, a legitimate
+    Bayesian limiting case this solver does NOT support (it would need a
+    hard-equality-constrained solve, not a matrix inverse). Before this
+    check, np.linalg.inv(Sx) raised a bare `LinAlgError: Singular matrix`
+    with no indication of what went wrong; must now raise a clear,
+    actionable ValueError naming the offending zone, and a strictly-
+    positive-but-tiny Sx (the documented workaround) must still work."""
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.01})]
+    city = _make_city(background=0.0, sensors=sensors)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.06)
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 30
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [10.0] * n_steps
+    mixing_height_history = [500.0] * n_steps
+    time_indices = [10, 15, 20, 25]
+    obs_template = [InversionObservation(sensor_id="S1", time_index=t, enhancement=0.0) for t in time_indices]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    observations = [InversionObservation(sensor_id="S1", time_index=t, enhancement=1.0) for t in time_indices]
+
+    with pytest.raises(ValueError, match="B"):
+        inv.solve(H, observations, x_prior=np.array([0.0, 0.0]), Sx=np.diag([1e12, 0.0]))
+
+    # the documented workaround (tiny but strictly positive variance) works
+    result = inv.solve(H, observations, x_prior=np.array([0.0, 0.0]), Sx=np.diag([1e12, 1e-10]))
+    print(f"\n[zero-variance prior workaround] x_hat={result.x_hat}")
+    assert abs(result.x_hat[1]) < 1e-4  # pinned near the dogmatic prior
+
+
+def test_nonpositive_or_nonfinite_sigma_rejected_not_silently_nan():
+    """Adversarial case: sigma=0 on an observation's sensor. Before this
+    check, Sy_inv = diag(1/sigma^2) silently produced inf, propagating to
+    a NaN x_hat/marginal_std with only a RuntimeWarning (easy to miss) --
+    worse than a crash, since the caller gets a result object that LOOKS
+    valid. Must raise instead."""
+    sensors_zero = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.0})]
+    city = _make_city(background=0.0, sensors=sensors_zero)
+    zone = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    inv = SourceInversion(city, SPECIES, [zone])
+
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(20)]
+    k_h_history = [10.0] * 20
+    mixing_height_history = [500.0] * 20
+    obs_template = [InversionObservation(sensor_id="S1", time_index=10, enhancement=0.0)]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    observations = [InversionObservation(sensor_id="S1", time_index=10, enhancement=1.0)]
+
+    with pytest.raises(ValueError, match="sigma"):
+        inv.solve(H, observations)
+
+
 def test_species_advisory_reuses_forward_model_deposition_rate():
     city = _make_city(v_dep=0.01, background=0.0)
     zone = Zone(name="z1", kind="point", lat=12.015, lon=77.02)

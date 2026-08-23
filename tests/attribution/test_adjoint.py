@@ -136,6 +136,46 @@ def test_k_h_from_history_gives_narrower_footprint_for_stable_low_k_h():
     assert ratio > 2.0  # clearly, not marginally, wider
 
 
+def test_out_of_domain_receptor_raises_instead_of_silently_reporting_full_boundary_inflow():
+    """Adversarial case: a receptor cell outside the grid (e.g. from an
+    unchecked CTMGrid.latlon_to_cell() result for a sensor just past the
+    domain edge). Before this check, trace() ran anyway and returned
+    boundary_inflow_fraction~1.0 -- a value indistinguishable from a
+    legitimate 'this receptor is right at the edge and everything blew
+    out' result, silently masking a caller bug. Every other consumer of
+    latlon_to_cell() in this codebase (assimilation.py, inverse.py,
+    kriging.py) bounds-checks explicitly; trace() must too."""
+    tracer = AdjointTracer(NX, NY, DX, DY)
+    wind_history, k_h_history = _flat_history(10, u=1.0, v=0.0, k_h=10.0)
+
+    with pytest.raises(ValueError):
+        tracer.trace(-1, 0, wind_history, k_h_history, k_dep=0.0, dt=60.0, n_particles=100, seed=0)
+    with pytest.raises(ValueError):
+        tracer.trace(0, NY, wind_history, k_h_history, k_dep=0.0, dt=60.0, n_particles=100, seed=0)
+    # the boundary-most VALID cell must still work fine
+    result = tracer.trace(0, 0, wind_history, k_h_history, k_dep=0.0, dt=60.0, n_particles=100, seed=0)
+    assert np.isfinite(result.interior_probability).all()
+
+
+def test_receptor_at_domain_corner_with_wind_blowing_out_reports_near_total_boundary_inflow():
+    """Adversarial case: receptor at the EXACT domain corner (0,0), wind
+    backward-displacing particles further into negative territory (i.e.
+    straight out through the corner) on the very first backward step.
+    Must not crash and must still satisfy the exact accounting identity."""
+    tracer = AdjointTracer(NX, NY, DX, DY)
+    wind_history, k_h_history = _flat_history(60, u=3.0, v=3.0, k_h=20.0)
+    result = tracer.trace(0, 0, wind_history, k_h_history, k_dep=0.0, dt=60.0, n_particles=4000, seed=3)
+
+    total = result.interior_probability.sum() + result.boundary_inflow_fraction
+    print(
+        f"\n[adjoint corner receptor] interior={result.interior_probability.sum()!r}, "
+        f"boundary={result.boundary_inflow_fraction!r}, total={total!r}"
+    )
+    assert total == pytest.approx(1.0, abs=1e-9)
+    assert result.boundary_inflow_fraction > 0.99
+    assert np.all(np.isfinite(result.interior_probability))
+
+
 def test_trace_ensemble_reports_nonzero_spread_unlike_fixed_seed():
     """Receptor placed close to an edge with enough diffusion/duration
     that SOME (not zero, not all) particles randomly cross the boundary --

@@ -89,6 +89,57 @@ def test_strong_wind_cfl_2p5_remains_stable_and_mass_conservative():
     assert mass_err < 0.01
 
 
+def test_negative_wind_translates_centroid_correctly():
+    """Every other advection test uses positive u,v -- an audit gap. The
+    donor-cell upwind formula picks its donor cell via `u_face >= 0`, which
+    is sign-symmetric by construction, but that symmetry had never actually
+    been exercised by a test. Same acceptance criteria as the positive-wind
+    case, mirrored: negative wind, blob starts near the far corner so it
+    has room to translate toward the origin."""
+    nx, ny, dx, dy = 80, 80, 500.0, 500.0
+    background = 10.0
+    u, v = -2.0, -1.0
+    dt = 60.0
+    n_steps = 30
+
+    blob = gaussian_blob(nx, ny, x0=60, y0=60, sigma=3.0, amplitude=100.0)
+    field_perturbed = (background + blob).astype(np.float32)
+    field_background_only = np.full((nx, ny), background, dtype=np.float32)
+
+    for _ in range(n_steps):
+        field_perturbed = advect(field_perturbed, u, v, dx, dy, dt, background)
+        field_background_only = advect(field_background_only, u, v, dx, dy, dt, background)
+
+    assert np.allclose(field_background_only, background, atol=1e-4)
+
+    diff = field_perturbed.astype(np.float64) - field_background_only.astype(np.float64)
+    ii, jj = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
+
+    mass0 = blob.sum()
+    ci0 = (blob * ii).sum() / mass0
+    cj0 = (blob * jj).sum() / mass0
+    mass1 = diff.sum()
+    ci1 = (diff * ii).sum() / mass1
+    cj1 = (diff * jj).sum() / mass1
+
+    elapsed = n_steps * dt
+    expected_di = u * elapsed / dx
+    expected_dj = v * elapsed / dy
+    di_err = abs((ci1 - ci0) - expected_di) / abs(expected_di)
+    dj_err = abs((cj1 - cj0) - expected_dj) / abs(expected_dj)
+    mass_err = abs(mass1 - mass0) / mass0
+
+    print(
+        f"\n[advection negative-wind centroid+mass] dx centroid error={di_err:.6%}, "
+        f"dy centroid error={dj_err:.6%}, mass error={mass_err:.6%}"
+    )
+
+    assert di_err < 0.01
+    assert dj_err < 0.01
+    assert mass_err < 0.001
+    assert not np.any(field_perturbed < 0)
+
+
 def test_sustained_inflow_fills_domain_toward_background():
     """Under sustained inflow the domain should fill toward the configured
     background concentration."""

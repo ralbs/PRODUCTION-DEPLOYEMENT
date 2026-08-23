@@ -181,3 +181,52 @@ def test_unknown_sensor_id_rejected_gracefully():
     assert diag["n_obs_used"] == 0
     assert diag["n_obs_rejected_unknown_sensor"] == 1
     assert diag["analysis_applied"] is False
+
+
+def test_zero_or_negative_sigma_rejected_with_its_own_diagnostic_not_mislabeled():
+    """Adversarial case: a sigma of exactly 0.0 (a 'perfectly trusted'
+    sensor) for a sensor that IS registered and DOES measure this species.
+    This used to be silently lumped into n_obs_rejected_unknown_sensor,
+    which is actively misleading -- the sensor is known, only its sigma is
+    unusable. Must be its own diagnostic counter, distinguishable from a
+    genuinely unregistered sensor id."""
+    city, grid, (ci, cj) = _make_city_with_sensors_at_center(n_sensors=1, sigma=1.0)
+    object.__setattr__(
+        city, "sensors",
+        [Sensor(id="ZERO", lat=city.sensors[0].lat, lon=city.sensors[0].lon, type="test",
+                species_error_sigma={SPECIES: 0.0})],
+    )
+    grid.set_field(SPECIES, np.full((grid.nx, grid.ny), BACKGROUND, dtype=np.float32))
+    diag = assimilate(city, grid, SPECIES, [Observation(sensor_id="ZERO", value=50.0)])
+
+    print(f"\n[assimilation sigma=0 QC] diag={diag}")
+    assert diag["n_obs_used"] == 0
+    assert diag["n_obs_rejected_invalid_sigma"] == 1
+    assert diag["n_obs_rejected_unknown_sensor"] == 0  # NOT mislabeled as unknown-sensor
+    assert diag["analysis_applied"] is False
+    assert np.all(grid.get_field(SPECIES) == np.float32(BACKGROUND))  # field untouched, not corrupted
+
+
+def test_sensor_exactly_at_boundary_most_valid_cell_still_assimilates():
+    """Adversarial case: a sensor placed exactly at the CENTER of the
+    boundary-most valid cell (0, 0) -- not just 'near' the edge, the most
+    extreme valid placement. Must assimilate normally, not be treated as
+    out-of-domain."""
+    domain = Domain(lat_sw=12.0, lon_sw=77.0, nx=20, ny=20, dx=500.0, dy=500.0)
+    species = {SPECIES: SpeciesConfig(name=SPECIES, unit="ug_m3", v_dep_m_s=0.0, background_conc=BACKGROUND)}
+    temp_city = CityConfig(city_name="Temp", domain=domain, utc_offset_hours=0.0, species=species, diurnal_profiles={"flat": [1.0] * 24})
+    temp_grid = CTMGrid(temp_city)
+    lat0, lon0 = temp_grid.cell_to_latlon(0, 0)
+
+    sensors = [Sensor(id="EDGE", lat=lat0, lon=lon0, type="test", species_error_sigma={SPECIES: 1.0})]
+    assim = AssimilationConfig(bg_error_fraction=0.3, correlation_length_m=3000.0, localisation_radius_m=8000.0)
+    city = CityConfig(city_name="EdgeTest", domain=domain, utc_offset_hours=0.0, species=species, diurnal_profiles={"flat": [1.0] * 24}, sensors=sensors, assimilation=assim)
+    grid = CTMGrid(city)
+    grid.set_field(SPECIES, np.full((20, 20), BACKGROUND, dtype=np.float32))
+    diag = assimilate(city, grid, SPECIES, [Observation(sensor_id="EDGE", value=50.0)])
+
+    print(f"\n[assimilation boundary-cell sensor] diag={diag}, analysis at (0,0)={grid.get_field(SPECIES)[0,0]!r}")
+    assert diag["n_obs_used"] == 1
+    assert diag["analysis_applied"] is True
+    assert BACKGROUND < grid.get_field(SPECIES)[0, 0] < 50.0
+    assert np.all(np.isfinite(grid.get_field(SPECIES)))

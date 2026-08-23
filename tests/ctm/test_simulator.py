@@ -3,8 +3,10 @@ and checkpoint-identity acceptance criteria."""
 import pickle
 
 import numpy as np
+import pytest
 
 from cities.loader import CityConfig, Domain, EmissionSource, SpeciesConfig
+from ctm.diffusion import DiffusionStabilityError
 from ctm.simulator import Simulator
 from met.weather_station import StationObservation
 
@@ -102,6 +104,59 @@ def test_checkpoint_roundtrip_identity(tmp_path):
     assert list(sim.k_h_history) == list(restored.k_h_history)
     assert sim.step_count == restored.step_count == n_steps
     assert sim.hour_utc == restored.hour_utc
+
+
+def test_step_rolls_back_atomically_on_mid_step_exception():
+    """Adversarial case: a REAL exception raised partway through step()'s
+    per-species transport loop (a DiffusionStabilityError from an unstable
+    K_h/dt combination -- K_h is applied uniformly to every species at the
+    SAME loop position each step). Before the fix, wind_history/k_h_history
+    were already appended (pipeline stage 2, before the loop that can
+    fail) while step_count/elapsed_seconds/hour_utc were not incremented --
+    a real, reproducible inconsistency: len(wind_history) == step_count + 1.
+    A caller that catches the exception and calls save_state() to
+    'preserve progress' would get an internally inconsistent checkpoint.
+    step() must instead roll back to EXACTLY its pre-step state."""
+    domain = Domain(lat_sw=12.0, lon_sw=77.0, nx=10, ny=10, dx=500.0, dy=500.0)
+    species = {
+        "a": SpeciesConfig(name="a", unit="ug_m3", v_dep_m_s=0.001, background_conc=10.0),
+        "b": SpeciesConfig(name="b", unit="ug_m3", v_dep_m_s=0.001, background_conc=10.0),
+    }
+    # dt=1200s with the daytime-climatology K_h (150 m^2/s, class A) gives
+    # r_x+r_y = 1.44 > 0.5 -- a real DiffusionStabilityError, not a stub.
+    city = CityConfig(
+        city_name="CrashTest", domain=domain, utc_offset_hours=0.0, species=species,
+        diurnal_profiles={"flat": [1.0] * 24}, dt_seconds=1200.0, wind_history_hours=10 / 60,
+    )
+    sim = Simulator(city, hour_utc0=12.0, enable_tagged_tracers=True)  # noon local -> daytime climatology
+
+    pre_fields = {sp: sim.grid.get_field(sp).copy() for sp in sim.grid.species}
+    pre_step_count = sim.step_count
+    pre_wind_len = len(sim.wind_history)
+
+    with pytest.raises(DiffusionStabilityError):
+        sim.step([])  # empty stations -> climatology fallback -> the unstable K_h above
+
+    print(
+        f"\n[simulator atomic step] after caught exception: step_count={sim.step_count} "
+        f"(pre={pre_step_count}), wind_history len={len(sim.wind_history)} (pre={pre_wind_len})"
+    )
+    assert sim.step_count == pre_step_count
+    assert len(sim.wind_history) == pre_wind_len
+    assert len(sim.k_h_history) == pre_wind_len
+    for sp in sim.grid.species:
+        np.testing.assert_array_equal(sim.grid.get_field(sp), pre_fields[sp])
+
+    # the rolled-back state must checkpoint consistently
+    checkpoint_path = "rollback_test_checkpoint.pkl"
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/{checkpoint_path}"
+        sim.save_state(path)
+        restored = Simulator(city, enable_tagged_tracers=True)
+        restored.load_state(path)
+        assert restored.step_count == len(restored.wind_history) or len(restored.wind_history) == 0
+        assert len(restored.wind_history) == pre_wind_len
 
 
 def test_old_format_checkpoint_loads_cleanly_with_empty_history(tmp_path):

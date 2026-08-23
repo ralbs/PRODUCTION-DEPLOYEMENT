@@ -64,6 +64,17 @@ class AdjointTracer:
         exactly as ctm.simulator.Simulator accumulates them -- iterated
         here newest-first, i.e. backward in time from "now").
         """
+        if not (0 <= receptor_i < self.nx and 0 <= receptor_j < self.ny):
+            raise ValueError(
+                f"receptor ({receptor_i}, {receptor_j}) is outside the grid "
+                f"(0<=i<{self.nx}, 0<=j<{self.ny}) -- every other consumer of "
+                f"CTMGrid.latlon_to_cell() in this codebase bounds-checks the "
+                f"result before use (see ctm/assimilation.py, "
+                f"attribution/inverse.py, interpolation/kriging.py); an "
+                f"out-of-domain receptor would otherwise silently report "
+                f"~100% boundary_inflow_fraction, which looks like a valid "
+                f"result rather than a caller bug."
+            )
         wind_history = list(wind_history)
         k_h_history = list(k_h_history)
         if len(wind_history) != len(k_h_history):

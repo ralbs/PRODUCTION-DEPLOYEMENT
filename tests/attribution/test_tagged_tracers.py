@@ -77,6 +77,56 @@ def test_tag_sum_equals_live_field_over_several_steps():
     assert set(sim.tagged_tracer_engine.tags) == {"background", "morning_evening", "daytime"}
 
 
+def test_inventory_gap_lands_entirely_in_unexplained_not_smeared_across_tags():
+    """Adversarial case: an emission source deliberately EXCLUDED from
+    source_to_tag (e.g. an unpermitted/unmodeled real-world source -- a
+    genuine inventory gap, not a code bug). The gap's entire contribution
+    must land in 'unexplained', exactly, and must NOT perturb the other
+    tags at all -- verified against a parallel simulation that never had
+    the gap source in the first place."""
+    domain = Domain(lat_sw=12.0, lon_sw=77.0, nx=30, ny=30, dx=500.0, dy=500.0)
+    species = {SPECIES: SpeciesConfig(name=SPECIES, unit="ug_m3", v_dep_m_s=0.001, background_conc=10.0)}
+    tracked_source = EmissionSource(name="tracked1", kind="point", profile="flat", rates={SPECIES: 0.03}, lat=12.02, lon=77.02)
+    leak_source = EmissionSource(name="UNTRACKED_LEAK", kind="point", profile="flat", rates={SPECIES: 0.05}, lat=12.03, lon=77.03)
+    stations = [StationObservation("M1", lat=12.015, lon=77.015, wind_speed_m_s=2.0, wind_dir_deg=250.0, temp_c=27.0, rh_pct=55.0)]
+
+    city_with_gap = CityConfig(
+        city_name="GapTest", domain=domain, utc_offset_hours=0.0, species=species,
+        diurnal_profiles={"flat": [1.0] * 24}, emission_sources=[tracked_source, leak_source],
+        dt_seconds=60.0, wind_history_hours=1.0,
+    )
+    sim = Simulator(city_with_gap, enable_tagged_tracers=True, source_to_tag={"tracked1": "known_category"})
+
+    city_tracked_only = CityConfig(
+        city_name="TrackedOnly", domain=domain, utc_offset_hours=0.0, species=species,
+        diurnal_profiles={"flat": [1.0] * 24}, emission_sources=[tracked_source],
+        dt_seconds=60.0, wind_history_hours=1.0,
+    )
+    sim_tracked_only = Simulator(city_tracked_only, enable_tagged_tracers=True)
+
+    for _ in range(15):
+        sim.step(stations)
+        sim_tracked_only.step(stations)
+
+    live = sim.grid.get_field(SPECIES).astype(np.float64)
+    tag_sum = sim.tagged_tracer_engine.tag_sum(SPECIES)
+    residual = sim.tagged_tracer_engine.unexplained_residual(SPECIES)
+    tag_sum_tracked_only = sim_tracked_only.tagged_tracer_engine.tag_sum(SPECIES)
+
+    tags_unaffected_by_gap = float(np.max(np.abs(tag_sum - tag_sum_tracked_only)))
+    residual_matches_leak_exactly = float(np.max(np.abs(residual - (live - tag_sum_tracked_only))))
+
+    print(
+        f"\n[inventory gap] tags present: {sim.tagged_tracer_engine.tags}\n"
+        f"  max|tag_sum(with gap) - tag_sum(gap-free sim)| = {tags_unaffected_by_gap:.3e} (tags must ignore the gap entirely)\n"
+        f"  max|residual - (live - gap-free tag_sum)| = {residual_matches_leak_exactly:.3e} (residual must equal exactly the gap's own contribution)"
+    )
+
+    assert tags_unaffected_by_gap < 1e-6
+    assert residual_matches_leak_exactly < 1e-6
+    assert float(np.max(np.abs(residual))) > 1e-3  # a real, nontrivial gap, not a no-op
+
+
 def test_assimilation_increment_lands_in_unexplained_not_categories():
     """Integration check: tagged tracers must run BEFORE assimilation in
     Simulator's step order (see ctm/simulator.py) -- confirmed here by

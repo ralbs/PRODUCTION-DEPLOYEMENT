@@ -186,6 +186,20 @@ class SourceInversion:
             [sensors_by_id[obs.sensor_id].species_error_sigma[self.species] for obs in observations],
             dtype=np.float64,
         )
+        # Ingestion-boundary QC (see CLAUDE.md's NaN rule): a sigma of 0 or
+        # non-finite silently turns Sy_inv's diagonal into inf, which
+        # propagates to a NaN x_hat/marginal_std with only a RuntimeWarning
+        # -- not an exception -- as the only sign anything went wrong. A
+        # non-finite observation enhancement is the same kind of hazard.
+        if len(sigma) and (np.any(~np.isfinite(sigma)) or np.any(sigma <= 0)):
+            bad = [obs.sensor_id for obs, s in zip(observations, sigma) if not np.isfinite(s) or s <= 0]
+            raise ValueError(
+                f"observation sigma must be finite and > 0 for every sensor; "
+                f"invalid for: {bad}"
+            )
+        if len(y) and np.any(~np.isfinite(y)):
+            bad = [obs.sensor_id for obs in observations if not np.isfinite(obs.enhancement)]
+            raise ValueError(f"observation enhancement must be finite; non-finite for: {bad}")
         Sy_inv = np.diag(1.0 / sigma**2)
 
         if x_prior is None:
@@ -195,7 +209,40 @@ class SourceInversion:
             # plausible signal, so the estimate is data-dominated.
             typical_scale = max(float(np.max(np.abs(y))), 1.0) if len(y) else 1.0
             Sx = np.eye(n_zones) * (1.0e6 * typical_scale) ** 2
-        Sx_inv = np.linalg.inv(Sx)
+        else:
+            # A prior with EXACTLY zero variance for some zone represents
+            # "we are certain of this rate, no uncertainty at all" -- a
+            # legitimate Bayesian limiting case (e.g. "this zone is a known-
+            # decommissioned source"), but not one this solver supports: it
+            # would need a genuine hard-equality-constrained solve, not a
+            # matrix inverse. Without this check, `np.linalg.inv(Sx)` fails
+            # with a bare `LinAlgError: Singular matrix` that gives the
+            # caller no indication of what went wrong or how to fix it.
+            zero_var = np.diag(Sx) <= 0
+            if np.any(zero_var):
+                bad_zones = [self.zones[i].name for i in np.where(zero_var)[0]]
+                raise ValueError(
+                    f"Sx must have strictly positive variance for every zone; "
+                    f"got <= 0 for {bad_zones}. A zone prior of 'exactly zero "
+                    f"uncertainty' isn't supported by this Bayesian-linear solve "
+                    f"(it would need a hard equality constraint, not a matrix "
+                    f"inverse). To express strong confidence a zone's true rate "
+                    f"is x_prior for that zone (e.g. a known-decommissioned "
+                    f"source), use a very small but strictly positive variance "
+                    f"instead of exactly 0.0, or exclude the zone from `zones` "
+                    f"entirely and subtract its known contribution from the "
+                    f"observations as part of the baseline."
+                )
+        try:
+            Sx_inv = np.linalg.inv(Sx)
+        except np.linalg.LinAlgError as e:
+            raise ValueError(
+                f"Sx is singular (not invertible) for reasons other than a "
+                f"literal zero on the diagonal -- e.g. two zones given an "
+                f"exactly linearly-dependent joint prior. Provide a full-rank "
+                f"Sx, or a diagonal one if zones are meant to have independent "
+                f"priors."
+            ) from e
 
         posterior_precision = H.T @ Sy_inv @ H + Sx_inv
         posterior_cov = np.linalg.inv(posterior_precision)

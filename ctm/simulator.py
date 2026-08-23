@@ -78,6 +78,52 @@ class Simulator:
         stations: list[StationObservation],
         observations: dict[str, list[Observation]] | None = None,
     ) -> dict:
+        """Runs one full simulation step ATOMICALLY: on any exception raised
+        partway through (e.g. `DiffusionStabilityError` from an unstable
+        K_h/dt combination discovered mid-species-loop -- a real,
+        reproducible case, not hypothetical), the simulator is rolled back
+        to EXACTLY its pre-step state -- concentration fields, tagged-
+        tracer fields, and wind/K_h history -- before the exception is
+        re-raised.
+
+        Without this, a caller that catches the exception and calls
+        `save_state()` to "preserve progress" gets an internally
+        inconsistent checkpoint: `wind_history`/`k_h_history` already have
+        one more entry than `step_count` reflects (they're recorded at
+        pipeline stage 2, before the per-species transport loop that can
+        fail), and species processed before the failure point are left
+        transported while later ones are not -- exactly the kind of silent
+        divergence the adjoint tracer's 1:1 wind/K_h-history alignment
+        assumption depends on never happening.
+        """
+        field_snapshot = {sp: self.grid.get_field(sp).copy() for sp in self.grid.species}
+        tag_field_snapshot = None
+        if self.tagged_tracer_engine is not None:
+            tag_field_snapshot = {
+                tag: {sp: arr.copy() for sp, arr in species_fields.items()}
+                for tag, species_fields in self.tagged_tracer_fields.items()
+            }
+        wind_history_snapshot = list(self.wind_history)
+        k_h_history_snapshot = list(self.k_h_history)
+
+        try:
+            return self._step_unchecked(stations, observations)
+        except Exception:
+            for sp, arr in field_snapshot.items():
+                self.grid.set_field(sp, arr)
+            if tag_field_snapshot is not None and self.tagged_tracer_engine is not None:
+                for tag, species_fields in tag_field_snapshot.items():
+                    for sp, arr in species_fields.items():
+                        self.tagged_tracer_engine.fields[tag][sp] = arr.copy()
+            self.wind_history = deque(wind_history_snapshot, maxlen=self.wind_history_maxlen)
+            self.k_h_history = deque(k_h_history_snapshot, maxlen=self.wind_history_maxlen)
+            raise
+
+    def _step_unchecked(
+        self,
+        stations: list[StationObservation],
+        observations: dict[str, list[Observation]] | None = None,
+    ) -> dict:
         dt = self.city.dt_seconds
         hour_local = local_hour_from_utc(self.hour_utc, self.city.utc_offset_hours)
 
