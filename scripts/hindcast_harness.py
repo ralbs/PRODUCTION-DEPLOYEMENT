@@ -142,15 +142,128 @@ def run_hindcast(
     for species, pairs in predictions.items():
         pred_arr = np.array([p for p, _ in pairs])
         obs_arr = np.array([o for _, o in pairs])
-        errors = pred_arr - obs_arr
-        if len(pairs) >= 2 and np.std(pred_arr) > 0 and np.std(obs_arr) > 0:
-            correlation = float(np.corrcoef(pred_arr, obs_arr)[0, 1])
-        else:
-            correlation = float("nan")
-        metrics[species] = {
-            "rmse": float(np.sqrt(np.mean(errors**2))),
-            "bias": float(np.mean(errors)),
-            "correlation": correlation,
-            "n": len(pairs),
-        }
+        metrics[species] = skill_metrics(pred_arr, obs_arr)
     return metrics
+
+
+def run_hindcast_temporal_holdout(
+    city: CityConfig,
+    start_time: datetime,
+    n_steps: int,
+    observations: list[HindcastRecord],
+    station_ids: set[str],
+    training_steps: int,
+    met_stations: list[StationObservation] | Callable[[int], list[StationObservation]],
+    hour_utc0: float = 0.0,
+) -> dict:
+    """A TEMPORAL holdout, distinct from run_hindcast()'s SPATIAL one:
+    the SAME stations (`station_ids`) are assimilated for `t <
+    training_steps`, then assimilation stops entirely and the model runs
+    forward freely (persistence/forecast, no further nudging) for the
+    remaining steps -- scored against those same stations' real
+    observations during that forecast period only. run_hindcast()'s
+    station-based assimilated/held-out partition can't express this (a
+    station there is either always-assimilated or never-assimilated for
+    the whole run); this is a genuinely different experimental axis
+    (time, not space), so it gets its own function rather than a
+    forced-fit reuse of the spatial one.
+
+    Returns `{species: {"rmse", "bias", "correlation", "mfb", "mfe", "n"}}`.
+    """
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    dt = city.dt_seconds
+
+    by_step_assim: dict[int, dict[str, list[Observation]]] = {}
+    by_step_score: dict[int, list[HindcastRecord]] = {}
+    for rec in observations:
+        if rec.station_id not in station_ids:
+            continue
+        offset_s = (rec.timestamp - start_time).total_seconds()
+        step = round(offset_s / dt)
+        if not (0 <= step < n_steps):
+            continue
+        if step < training_steps:
+            by_step_assim.setdefault(step, {}).setdefault(rec.species, []).append(
+                Observation(sensor_id=rec.station_id, value=rec.value)
+            )
+        else:
+            by_step_score.setdefault(step, []).append(rec)
+
+    sim = Simulator(city, hour_utc0=hour_utc0)
+    predictions: dict[str, list[tuple[float, float]]] = {}
+
+    for t in range(n_steps):
+        stations = met_stations(t) if callable(met_stations) else met_stations
+        sim.step(stations, observations=by_step_assim.get(t) if t < training_steps else None)
+
+        for rec in by_step_score.get(t, []):
+            i, j = sim.grid.latlon_to_cell(rec.lat, rec.lon)
+            if not (0 <= i < sim.grid.nx and 0 <= j < sim.grid.ny):
+                continue
+            pred = float(sim.grid.get_field(rec.species)[i, j])
+            predictions.setdefault(rec.species, []).append((pred, rec.value))
+
+    metrics = {}
+    for species, pairs in predictions.items():
+        pred_arr = np.array([p for p, _ in pairs])
+        obs_arr = np.array([o for _, o in pairs])
+        metrics[species] = skill_metrics(pred_arr, obs_arr)
+    return metrics
+
+
+def mean_fractional_bias(pred: np.ndarray, obs: np.ndarray) -> float:
+    """MFB = mean[2*(P-O)/(P+O)], Boylan & Russell (2006), "PM air quality
+    model performance metrics: a comparison of predictive and explanatory
+    performance" (Atmospheric Environment 40). The symmetric 2*(P-O)/(P+O)
+    normalization (not a plain (P-O)/O relative error) is specifically
+    chosen because a plain O-only denominator blows up / is asymmetric
+    near zero; this form is bounded in [-200%, +200%] by construction.
+    Pairs where P+O == 0 are excluded (undefined, not zero)."""
+    pred = np.asarray(pred, dtype=np.float64)
+    obs = np.asarray(obs, dtype=np.float64)
+    denom = pred + obs
+    valid = denom != 0
+    if not np.any(valid):
+        return float("nan")
+    return float(np.mean(2.0 * (pred[valid] - obs[valid]) / denom[valid]))
+
+
+def mean_fractional_error(pred: np.ndarray, obs: np.ndarray) -> float:
+    """MFE = mean[2*|P-O|/(P+O)], Boylan & Russell (2006) -- see
+    mean_fractional_bias()'s docstring for the citation and why this
+    symmetric normalization is used. Bounded in [0%, 200%] by
+    construction. Boylan & Russell's suggested PM2.5 performance
+    thresholds (also widely applied to other species in practice):
+    GOAL (tighter, desirable): MFE <= 50%, |MFB| <= 30%.
+    CRITERIA (looser, acceptable): MFE <= 75%, |MFB| <= 60%."""
+    pred = np.asarray(pred, dtype=np.float64)
+    obs = np.asarray(obs, dtype=np.float64)
+    denom = pred + obs
+    valid = denom != 0
+    if not np.any(valid):
+        return float("nan")
+    return float(np.mean(2.0 * np.abs(pred[valid] - obs[valid]) / denom[valid]))
+
+
+def skill_metrics(pred: np.ndarray, obs: np.ndarray) -> dict:
+    """RMSE, bias, Pearson correlation, MFB, and MFE for one (pred, obs)
+    pair array -- the single source of truth run_hindcast() and any
+    caller comparing predictions to observations should use, so these
+    numbers are never computed two different ways in two different
+    places."""
+    pred = np.asarray(pred, dtype=np.float64)
+    obs = np.asarray(obs, dtype=np.float64)
+    errors = pred - obs
+    if len(pred) >= 2 and np.std(pred) > 0 and np.std(obs) > 0:
+        correlation = float(np.corrcoef(pred, obs)[0, 1])
+    else:
+        correlation = float("nan")
+    return {
+        "rmse": float(np.sqrt(np.mean(errors**2))) if len(pred) else float("nan"),
+        "bias": float(np.mean(errors)) if len(pred) else float("nan"),
+        "correlation": correlation,
+        "mfb": mean_fractional_bias(pred, obs),
+        "mfe": mean_fractional_error(pred, obs),
+        "n": len(pred),
+    }

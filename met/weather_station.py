@@ -93,13 +93,24 @@ def mixing_height_m(
     cap_m: float = 2000.0,
     day_growth_coeff: float = 500.0,
 ) -> float:
-    """Day: grows with sqrt(hours since sunrise), capped ~2km. Night:
-    shallow, 50 + 30*u10."""
+    """Day: grows with sqrt(hours since sunrise) from the SAME night-time
+    floor (50 + 30*u10), capped ~2km. Night: shallow, 50 + 30*u10.
+
+    The day formula is floored at the night value specifically so there is
+    no discontinuity exactly AT sunrise: t_since_sunrise=0 there gives
+    day_growth_coeff*sqrt(0)=0 exactly, which without the floor is an
+    unphysical instantaneous collapse from the night baseline to a literal
+    0 m mixing height (not just "small") -- and a real crash, since
+    ctm/emissions.py requires mixing_height_m > 0. Caught by an actual
+    forward run hitting hour_local == 6.0 exactly (a real production
+    scenario over multi-day runs, not a synthetic edge case)."""
+    night_floor = 50.0 + 30.0 * wind_speed_m_s
     is_day = 6.0 <= hour_local < 18.0
     if is_day:
         t_since_sunrise = max(0.0, hour_local - sunrise_hour)
-        return float(min(cap_m, day_growth_coeff * np.sqrt(t_since_sunrise)))
-    return 50.0 + 30.0 * wind_speed_m_s
+        day_value = day_growth_coeff * np.sqrt(t_since_sunrise)
+        return float(min(cap_m, max(night_floor, day_value)))
+    return night_floor
 
 
 def _idw(grid_x, grid_y, station_x, station_y, values, power: float = 2.0, eps: float = 1.0):

@@ -145,3 +145,24 @@ def test_mixing_height_day_grows_and_night_uses_wind_formula():
 
     h_night = mixing_height_m(hour_local=2.0, wind_speed_m_s=3.0)
     assert h_night == pytest.approx(50.0 + 30.0 * 3.0)
+
+
+def test_mixing_height_has_no_discontinuity_exactly_at_sunrise():
+    """Regression test for a real bug found running the model over a real
+    multi-day window: at hour_local == sunrise_hour EXACTLY,
+    day_growth_coeff*sqrt(t_since_sunrise) is sqrt(0)=0, which without a
+    floor collapses mixing height from the night baseline straight to a
+    literal 0 m -- not just "small" -- and crashes ctm/emissions.py's
+    `mixing_height_m must be > 0` check on any run whose stepping happens
+    to land exactly on the sunrise minute (a real occurrence over
+    thousands of steps, not a contrived edge case)."""
+    from met.weather_station import mixing_height_m
+
+    wind = 2.0
+    h_just_before = mixing_height_m(hour_local=5.9999, wind_speed_m_s=wind)
+    h_at_sunrise = mixing_height_m(hour_local=6.0, wind_speed_m_s=wind)
+    print(f"\n[mixing height sunrise continuity] just before={h_just_before}, at sunrise={h_at_sunrise}")
+
+    assert h_at_sunrise > 0.0
+    assert h_at_sunrise == pytest.approx(50.0 + 30.0 * wind)  # floored at the night baseline
+    assert abs(h_at_sunrise - h_just_before) < 1.0  # continuous, not a discontinuous collapse

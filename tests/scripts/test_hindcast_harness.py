@@ -32,12 +32,45 @@ from met.weather_station import StationObservation
 from scripts.hindcast_harness import (
     HindcastRecord,
     load_observations_csv,
+    mean_fractional_bias,
+    mean_fractional_error,
     run_hindcast,
     write_observations_csv,
 )
 
 SPECIES = "pm25"
 START = datetime(2024, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
+
+
+def test_mean_fractional_bias_and_error_match_boylan_russell_closed_form():
+    """Boylan & Russell (2006): MFB=mean[2(P-O)/(P+O)], MFE=mean[2|P-O|/(P+O)].
+    Verified against exact closed forms, not just 'runs without error':
+    a perfect match gives 0/0; a perfect 2x over-prediction gives exactly
+    +2/3 for both (the symmetric normalization's defining property -- a
+    2x over-prediction and a 2x under-prediction have the SAME magnitude,
+    unlike a plain (P-O)/O relative error, which would give +100% and
+    -50% for the same ratio flip); MFE >= |MFB| always, with equality
+    only when every error shares the same sign."""
+    exact = np.array([10.0, 20.0, 30.0])
+    assert mean_fractional_bias(exact, exact) == 0.0
+    assert mean_fractional_error(exact, exact) == 0.0
+
+    over = np.array([20.0])
+    under_ref = np.array([10.0])
+    mfb_over = mean_fractional_bias(over, under_ref)
+    assert mfb_over == pytest.approx(2.0 / 3.0)
+
+    under = np.array([5.0])
+    mfb_under = mean_fractional_bias(under, under_ref)
+    assert mfb_under == pytest.approx(-2.0 / 3.0)
+    assert mfb_under == pytest.approx(-mfb_over)  # symmetric under vs over
+
+    mixed_pred = np.array([12.0, 8.0])
+    mixed_obs = np.array([10.0, 10.0])
+    mfb_mixed = mean_fractional_bias(mixed_pred, mixed_obs)
+    mfe_mixed = mean_fractional_error(mixed_pred, mixed_obs)
+    print(f"\n[MFB/MFE] mixed-sign case: MFB={mfb_mixed:.6f}, MFE={mfe_mixed:.6f}")
+    assert mfe_mixed >= abs(mfb_mixed)  # errors partially cancel in MFB, never in MFE
 
 
 def _make_city(with_source: bool, sensors: list[Sensor]):

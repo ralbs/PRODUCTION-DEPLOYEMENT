@@ -49,13 +49,16 @@
   ],
 
   "sensors": [
-    {"id": "AQMS-01", "lat": 12.975, "lon": 77.60, "type": "SDS011",
-     "species_error_sigma": {"pm25": 8.0, "pm10": 10.0}},
-    {"id": "AQMS-02", "lat": 12.95,  "lon": 77.65, "type": "MiCS-6814",
-     "species_error_sigma": {"no2": 15.0, "co": 2.5}},
-    {"id": "AQMS-03", "lat": 13.00,  "lon": 77.55, "type": "ZE03-SO2",
-     "species_error_sigma": {"so2": 5.0}}
+    {"id": "6983", "lat": 12.938539, "lon": 77.5901, "type": "CPCB/KSPCB-CAAQMS",
+     "_name": "Hombegowda Nagar, Bengaluru - KSPCB",
+     "_source": "OpenAQ public archive (s3://openaq-data-archive), real station, reporting since 2018-08",
+     "species_error_sigma": {"pm25": 5.0, "pm10": 8.0, "co": 0.15, "no2": 4.0, "so2": 2.0}},
+    {"id": "6984", "lat": 13.029152, "lon": 77.585901, "type": "CPCB/KSPCB-CAAQMS",
+     "_name": "Hebbal, Bengaluru - KSPCB",
+     "_source": "OpenAQ public archive (s3://openaq-data-archive), real station, reporting since 2018-08",
+     "species_error_sigma": {"pm25": 5.0, "pm10": 8.0, "co": 0.15, "no2": 4.0, "so2": 2.0}}
   ],
+  "_sensors_note": "species_error_sigma values above are engineering-judgment placeholders (CPCB doesn't publish per-instrument calibration uncertainty in its open data), NOT vendor-certified numbers -- reasonable orders of magnitude for reference-grade CAAQM analyzers, not a validated instrument spec.",
 
   "assimilation": {
     "bg_error_fraction": 0.30,
