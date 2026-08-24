@@ -99,6 +99,14 @@ class SpeciesAdvisory:
 
 class SourceInversion:
     def __init__(self, city: CityConfig, species: str, zones: list[Zone]):
+        if species not in city.species:
+            raise ValueError(
+                f"species {species!r} is not declared in {city.city_name!r}'s "
+                f"config (declared species: {sorted(city.species)}). Rejected "
+                f"cleanly at construction rather than failing later with a "
+                f"confusing KeyError deep inside _run_unit_response() or "
+                f"solve() the first time this species is actually used."
+            )
         self.city = city
         self.species = species
         self.zones = zones
@@ -292,7 +300,7 @@ class SourceInversion:
             quasi_conservative=quasi_conservative, message=message,
         )
 
-    def screen_zones_by_backward_footprint(
+    def zones_from_footprint_priority(
         self,
         receptors: list[tuple[int, int]],
         wind_history,
