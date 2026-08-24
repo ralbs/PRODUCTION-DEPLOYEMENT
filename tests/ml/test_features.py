@@ -120,6 +120,143 @@ def test_cell_features_matches_feature_tensor_same_code_path():
         extractor.cell_features(sim.grid.nx, 0)
 
 
+def test_sequence_recorder_snapshots_are_independent_not_aliased():
+    """Adversarial case: a classic numpy ring-buffer hazard -- if
+    feature_tensor() ever returned a VIEW instead of a fresh array,
+    mutating the grid after recording would retroactively corrupt already-
+    recorded snapshots. Verified NOT to happen: record 3 distinct steps,
+    then mutate the grid directly, and confirm the last recorded snapshot
+    is unchanged."""
+    city = _make_city()
+    sim = Simulator(city)
+    extractor = MLFeatureExtractor(sim)
+    recorder = SequenceRecorder(extractor, seq_len=3)
+
+    for _ in range(3):
+        _run_one_step(sim)
+        recorder.record()
+    seq = recorder.sequence()
+    values_before_mutation = seq[:, 0, 0, 0].copy()
+
+    sim.grid.fields[PM25][0, 0] = 99999.0  # direct mutation, bypassing set_field's clamp
+    print(f"\n[sequence recorder aliasing] recorded values={values_before_mutation!r}")
+    print(f"after direct grid mutation, seq unchanged: {np.array_equal(seq[:, 0, 0, 0], values_before_mutation)}")
+
+    assert len({round(float(v), 6) for v in values_before_mutation}) == 3  # genuinely distinct per step
+    np.testing.assert_array_equal(seq[:, 0, 0, 0], values_before_mutation)
+
+
+def test_sequence_recorder_slides_correctly_past_seq_len():
+    """Adversarial case: record() called MORE times than seq_len. Must
+    behave as a proper sliding window (deque maxlen), keeping the LAST
+    seq_len snapshots, not crash or keep stale/extra entries."""
+    city = _make_city()
+    sim = Simulator(city)
+    extractor = MLFeatureExtractor(sim)
+    recorder = SequenceRecorder(extractor, seq_len=3)
+
+    values_at_each_step = []
+    for _ in range(6):
+        _run_one_step(sim)
+        recorder.record()
+        values_at_each_step.append(float(extractor.feature_tensor()[0, 0, 0]))
+
+    seq = recorder.sequence()
+    print(f"\n[sequence recorder overflow] last 3 expected={values_at_each_step[-3:]}, got={seq[:,0,0,0].tolist()}")
+    assert seq.shape == (3, extractor.n_channels, sim.grid.nx, sim.grid.ny)
+    np.testing.assert_allclose(seq[:, 0, 0, 0], values_at_each_step[-3:])
+
+
+def test_negative_cell_index_raises_not_silent_numpy_wraparound():
+    """Adversarial case: numpy natively treats a negative index as
+    wraparound-from-the-end (arr[-1] == arr[shape-1]), which for
+    cell_features() would silently return a DIFFERENT, real cell's
+    features instead of erroring on invalid input. Must raise IndexError
+    before that wraparound can happen."""
+    city = _make_city()
+    sim = Simulator(city)
+    _run_one_step(sim)
+    extractor = MLFeatureExtractor(sim)
+
+    with pytest.raises(IndexError):
+        extractor.cell_features(-1, 0)
+    with pytest.raises(IndexError):
+        extractor.cell_features(0, -1)
+    with pytest.raises(IndexError):
+        extractor.cell_features(-1, -1)
+
+
+def test_never_stepped_simulator_gives_zero_met_channels_not_a_crash():
+    """Adversarial case: MLFeatureExtractor built from a Simulator that
+    has never taken a step (empty wind_history/k_h_history)."""
+    city = _make_city()
+    sim = Simulator(city)  # zero steps taken
+    extractor = MLFeatureExtractor(sim)
+    tensor = extractor.feature_tensor()
+
+    print(f"\n[never-stepped simulator] all finite={np.all(np.isfinite(tensor))}")
+    assert np.all(np.isfinite(tensor))
+    wind_u_idx = extractor.channel_names.index("wind_u")
+    k_h_idx = extractor.channel_names.index("k_h")
+    assert np.all(tensor[wind_u_idx] == 0.0)
+    assert np.all(tensor[k_h_idx] == 0.0)
+
+
+def test_nan_in_met_history_is_also_sanitized_not_just_concentration():
+    """Adversarial case: the original NaN-sanitization test only poisoned
+    a concentration field. Poison the recorded wind history directly
+    (simulating a met-pipeline bug reaching the stored history) and
+    confirm the met channels are sanitized too -- nan_to_num applies to
+    the WHOLE stacked tensor, not selectively."""
+    city = _make_city()
+    sim = Simulator(city)
+    _run_one_step(sim)
+    extractor = MLFeatureExtractor(sim)
+
+    sim.wind_history[-1]["u"][0, 0] = np.nan
+    sim.wind_history[-1]["v"][1, 1] = np.inf
+    tensor = extractor.feature_tensor()
+
+    print(f"\n[met NaN sanitization] all finite={np.all(np.isfinite(tensor))}")
+    assert np.all(np.isfinite(tensor))
+    assert tensor[extractor.channel_names.index("wind_u"), 0, 0] == 0.0
+
+
+def test_nonpositive_clim_max_rejected_not_silently_wrong():
+    """Adversarial case: cities/schema.json places NO constraint on
+    clim_max (documented only as a 'gross-outlier QC ceiling'), so a
+    config with clim_max<=0 passes validation and would otherwise reach
+    feature_tensor() unguarded. A zero scale divides by zero (inf, then
+    clamped by nan_to_num to a fixed, meaningless 1e6 in every cell,
+    destroying the channel's information content); a NEGATIVE scale
+    silently sign-flips the whole channel to a finite-looking but wrong
+    value with NO warning at all -- worse than the zero case, since it
+    passes any 'is finite' sanity check silently."""
+    for bad_clim_max in [0.0, -100.0]:
+        city = _make_city()
+        object.__setattr__(
+            city, "species",
+            {**city.species, PM25: SpeciesConfig(name=PM25, unit="ug_m3", v_dep_m_s=0.0002, background_conc=10.0, clim_max=bad_clim_max)},
+        )
+        sim = Simulator(city)
+        _run_one_step(sim)
+        with pytest.raises(ValueError):
+            MLFeatureExtractor(sim)
+
+
+def test_zero_channels_raises_clearly_not_a_bare_numpy_stack_error():
+    """Adversarial case: a city with no species, include_met=False, and no
+    tagged tracers has nothing for feature_tensor() to build. Before this
+    check, np.stack([]) would fail with a bare, uninformative
+    'need at least one array to stack'."""
+    domain = Domain(lat_sw=12.0, lon_sw=77.0, nx=10, ny=8, dx=500.0, dy=500.0)
+    city = CityConfig(city_name="Empty", domain=domain, utc_offset_hours=0.0, species={}, diurnal_profiles={"flat": [1.0] * 24}, dt_seconds=60.0)
+    sim = Simulator(city)
+    _run_one_step(sim)
+    with pytest.raises(ValueError, match="zero channels"):
+        MLFeatureExtractor(sim, include_met=False)
+
+
 def test_sequence_recorder_raises_cleanly_on_insufficient_history():
     city = _make_city()
     sim = Simulator(city)

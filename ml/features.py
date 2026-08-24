@@ -53,9 +53,24 @@ class MLFeatureExtractor:
         self._scales: dict[str, float] = {}
         for sp in self._species:
             sp_cfg = simulator.city.species[sp]
-            self._scales[sp] = (
-                float(sp_cfg.clim_max) if sp_cfg.clim_max is not None else max(5.0 * sp_cfg.background_conc, 1.0)
-            )
+            scale = float(sp_cfg.clim_max) if sp_cfg.clim_max is not None else max(5.0 * sp_cfg.background_conc, 1.0)
+            if not (scale > 0):
+                # cities/schema.json places NO constraint on clim_max (it's
+                # only documented as a "gross-outlier QC ceiling"), so a
+                # config with clim_max<=0 passes validation and reaches
+                # here unguarded. A zero scale divides every reading by
+                # zero (inf, then clamped by nan_to_num to a fixed but
+                # utterly meaningless 1e6 in every cell); a negative scale
+                # silently sign-flips the whole channel to a finite-looking
+                # but wrong value with no warning at all -- worse than a
+                # crash, since it passes any "is finite" sanity check.
+                raise ValueError(
+                    f"species {sp!r} has a non-positive normalization scale "
+                    f"({scale}), from clim_max={sp_cfg.clim_max!r} or the "
+                    f"5x-background fallback -- both must be > 0 for a "
+                    f"reference-scale normalization to be meaningful."
+                )
+            self._scales[sp] = scale
 
         self._channel_names: list[str] = [f"conc_{sp}" for sp in self._species]
         if self.include_met:
@@ -63,6 +78,14 @@ class MLFeatureExtractor:
         if simulator.enable_tagged_tracers:
             for tag in simulator.tagged_tracer_engine.tags:
                 self._channel_names += [f"tag_{tag}_{sp}" for sp in self._species]
+
+        if not self._channel_names:
+            raise ValueError(
+                "MLFeatureExtractor has zero channels to extract -- the "
+                "city has no species, include_met=False, and tagged "
+                "tracers are disabled. There is nothing for feature_tensor() "
+                "to build (np.stack() would fail on an empty list)."
+            )
 
     @property
     def channel_names(self) -> list[str]:
