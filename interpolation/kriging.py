@@ -65,6 +65,24 @@ def _cross_distances(coords_a: np.ndarray, coords_b: np.ndarray) -> np.ndarray:
     return np.sqrt((diff**2).sum(axis=-1))
 
 
+def _solve_kriging_system(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """Solve the kriging linear system A@W=B. Real station networks
+    sometimes contain exactly (or near-exactly) co-located stations --
+    e.g. a primary/backup sensor pair at one site, or a duplicate row from
+    a data export -- which makes A singular (two identical rows/columns).
+    `np.linalg.solve` raises a bare `LinAlgError: Singular matrix` on this
+    with no indication of the cause; `lstsq` instead returns the minimum-
+    norm least-squares solution, which for duplicate stations sensibly
+    splits their combined kriging weight evenly between them (verified: a
+    plain average of two duplicate readings, pulled slightly by whatever
+    else is in the network -- not an arbitrary or unstable result). Exactly
+    reproduces `solve`'s result when A is well-conditioned, so this is a
+    strict robustness improvement, not a behavior change for the normal
+    case."""
+    W, *_ = np.linalg.lstsq(A, B, rcond=None)
+    return W
+
+
 @dataclass(frozen=True)
 class VariogramModel:
     """A fitted (or hand-specified) semivariogram. `covariance(h)` follows
@@ -237,7 +255,24 @@ def ordinary_kriging(station_xy, values, variogram: VariogramModel, target_xy):
     n = len(values)
     m = target_xy.shape[0]
     if n == 0:
-        return np.full(m, np.nan), np.full(m, variogram.sill)
+        # Silently returning NaN here would let a caller (e.g. krige_map(),
+        # if EVERY station fails QC in station_residuals -- a real
+        # operational scenario, not hypothetical) publish an all-NaN
+        # concentration map with no error or warning. Every other ingestion
+        # boundary in this project rejects rather than silently propagates
+        # a "no data" state (see met.weather_station's climatology
+        # fallback, which explicitly still returns a full diagnostics dict
+        # rather than None) -- kriging with zero stations has no sensible
+        # numeric fallback, so it must raise instead.
+        raise ValueError(
+            "ordinary_kriging() called with zero stations -- there is no "
+            "spatial information to interpolate from. If this came from "
+            "krige_map()/station_residuals(), every station likely failed "
+            "QC (non-finite reading or outside the grid domain); the "
+            "caller must decide how to handle a no-data cycle (e.g. "
+            "publish the raw CTM field with no residual correction), not "
+            "silently receive an all-NaN map."
+        )
 
     A = np.empty((n + 1, n + 1), dtype=np.float64)
     A[:n, :n] = variogram.covariance(_pairwise_distances(station_xy))
@@ -249,7 +284,7 @@ def ordinary_kriging(station_xy, values, variogram: VariogramModel, target_xy):
     B[:n, :] = variogram.covariance(_cross_distances(station_xy, target_xy))
     B[n, :] = 1.0
 
-    W = np.linalg.solve(A, B)  # (n+1, m): weights + Lagrange multiplier per target
+    W = _solve_kriging_system(A, B)  # (n+1, m): weights + Lagrange multiplier per target
     estimate = W[:n, :].T @ values
     variance = np.maximum(variogram.sill - np.einsum("im,im->m", W, B), 0.0)
     return estimate, variance
@@ -309,6 +344,25 @@ def cokriging(
     secondary_values = np.asarray(secondary_values, dtype=np.float64)
     target_xy = np.asarray(target_xy, dtype=np.float64)
 
+    # Enforce the documented requirement (see docstring) that secondary_xy
+    # is a co-located subset of primary_xy -- without this, the cross-
+    # semivariogram silently degenerates to a near-zero cross-covariance
+    # for unrelated locations, and cokriging() still runs to completion
+    # producing plausible-looking but methodologically meaningless numbers
+    # (verified: this was a real, silent failure mode before this check).
+    if len(secondary_xy):
+        nearest_primary_dist = np.min(_cross_distances(secondary_xy, primary_xy), axis=1)
+        not_colocated = nearest_primary_dist > 1.0  # meters; allows float round-trip noise
+        if np.any(not_colocated):
+            bad = np.where(not_colocated)[0]
+            raise ValueError(
+                f"cokriging() requires secondary_xy to be a co-located subset "
+                f"of primary_xy (see module docstring) -- secondary station "
+                f"index(es) {bad.tolist()} are not within 1m of any primary "
+                f"station (nearest distances: "
+                f"{nearest_primary_dist[bad].round(1).tolist()} m)."
+            )
+
     n1, n2, m = len(primary_values), len(secondary_values), target_xy.shape[0]
     size = n1 + n2 + 2
     mu1, mu2 = n1 + n2, n1 + n2 + 1  # Lagrange-multiplier row/col indices
@@ -332,7 +386,7 @@ def cokriging(
     B[n1 : n1 + n2, :] = variogram_yy.covariance(_cross_distances(secondary_xy, target_xy))
     B[mu2, :] = 1.0  # mu1's row stays 0 (X-weight constraint sums to 0)
 
-    W = np.linalg.solve(A, B)
+    W = _solve_kriging_system(A, B)
     lam, nu = W[:n1, :], W[n1 : n1 + n2, :]
     estimate = lam.T @ primary_values + nu.T @ secondary_values
     variance = np.maximum(variogram_yy.sill - np.einsum("im,im->m", W, B), 0.0)

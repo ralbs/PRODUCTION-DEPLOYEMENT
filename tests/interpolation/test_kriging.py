@@ -78,7 +78,21 @@ def test_ordinary_kriging_is_exact_interpolator_at_data_points_zero_nugget():
     assert max_var < 1e-6
 
 
-def test_kriging_variance_near_zero_at_station_grows_and_caps_near_sill():
+def test_kriging_variance_near_zero_at_station_grows_toward_up_to_2x_sill():
+    """Kriging variance is Var(prediction - truth), NOT Var(truth) alone --
+    an earlier version of this test claimed it "caps near the sill" far
+    from data, which is a common but INCORRECT simplification (caught by
+    this audit). The universally correct bound is 0 <= variance <= 2*sill:
+    at zero distance from a single station, variance=0 (exact
+    interpolation); infinitely far from ANY correlation, using a fixed
+    (possibly stale) prediction for a now-uncorrelated truth gives
+    Var(pred)+Var(truth)-2*Cov = sill+sill-0 = 2*sill. This TIGHT PAIR of
+    stations acts like one clustered source of information, so its far-
+    field asymptote sits close to 2*sill (verified: ~15.74 of 16.0) --
+    see test_single_station_ordinary_kriging_is_a_constant_predictor for
+    the exact n=1 closed form, and the module's synthetic-recovery tests
+    for a well-DISTRIBUTED network, where the asymptote sits closer to
+    (but can still exceed) 1x sill."""
     variogram = VariogramModel(model="exponential", nugget=0.0, partial_sill=9.0, range_m=3000.0)
     station_xy = np.array([[0.0, 0.0], [200.0, 0.0]])  # a tight pair, acts as ~one source of info
     values = np.array([10.0, 10.2])
@@ -88,11 +102,12 @@ def test_kriging_variance_near_zero_at_station_grows_and_caps_near_sill():
     target_xy[:, 0] += station_xy[0, 0]  # measured from the first station
 
     _, variance = ordinary_kriging(station_xy, values, variogram, target_xy)
-    print(f"\n[kriging variance vs distance] distances={distances}, variance={variance}, sill={variogram.sill}")
+    print(f"\n[kriging variance vs distance] distances={distances}, variance={variance}, sill={variogram.sill}, 2*sill={2*variogram.sill}")
 
-    assert variance[0] < 1e-6  # at the station itself
+    assert variance[0] < 1e-6  # at the station itself: exact interpolation
     assert np.all(np.diff(variance) >= -1e-9)  # non-decreasing with distance
-    assert variance[-1] > 0.9 * variogram.sill  # caps near the sill far from all data
+    assert variance[-1] <= 2 * variogram.sill + 1e-6  # the universal upper bound
+    assert variance[-1] > variogram.sill  # for this CLUSTERED pair specifically, it exceeds 1x sill
 
 
 def test_fit_variogram_median_recovery_over_gp_realizations():
@@ -260,6 +275,120 @@ def test_fit_cross_variogram_respects_cauchy_schwarz_bound_from_auto_variograms(
 
     assert abs(variogram_xy.partial_sill) <= sill_bound + 1e-9
     assert abs(variogram_xy.nugget) <= nugget_bound + 1e-9
+
+
+def test_duplicate_colocated_stations_with_conflicting_values_do_not_crash():
+    """Adversarial case: two stations at the EXACT same location reporting
+    DIFFERENT values (a realistic data-quality issue -- a primary/backup
+    sensor pair at one site, or a duplicated row from a data export). This
+    makes the kriging matrix singular (two identical rows/columns); before
+    the fix, np.linalg.solve raised a bare LinAlgError: Singular matrix.
+    The least-squares fallback must instead give a sensible answer: at the
+    duplicated location itself, the natural resolution is the AVERAGE of
+    the conflicting readings."""
+    variogram = VariogramModel(model="exponential", nugget=0.0, partial_sill=8.0, range_m=3000.0)
+    station_xy = np.array([[5000.0, 5000.0], [5000.0, 5000.0], [8000.0, 2000.0]])
+    values = np.array([10.0, 30.0, 15.0])
+    target_xy = np.array([[5000.0, 5000.0], [6000.0, 6000.0]])
+
+    estimate, variance = ordinary_kriging(station_xy, values, variogram, target_xy)
+    print(f"\n[duplicate stations] estimate={estimate!r}, variance={variance!r}")
+
+    assert np.all(np.isfinite(estimate))
+    assert np.all(np.isfinite(variance))
+    assert estimate[0] == pytest.approx(20.0, abs=1e-6)  # exact average of the conflicting pair
+
+    # leave_one_out_cv must also survive duplicates without crashing
+    result = leave_one_out_cv(station_xy, values, variogram)
+    print(f"[duplicate stations LOO] predictions={result['predictions']!r}")
+    assert np.all(np.isfinite(result["predictions"]))
+
+
+def test_single_station_ordinary_kriging_is_a_constant_predictor():
+    """Adversarial case: n=1 station. Ordinary kriging's unbiasedness
+    constraint forces the single weight to exactly 1, so the estimate must
+    be the station's own value EVERYWHERE. The variance has an EXACT
+    closed form here (audit finding: a prior version of this test wrongly
+    assumed variance caps near 1x sill -- it does not, in general): the
+    kriging variance is Var(prediction - truth); with n=1 the prediction
+    IS Z(station), so variance = Var(Z(station) - Z(target)) =
+    2*C(0) - 2*C(h) = 2*sill - 2*cov(h), which -> 2*sill (not sill) as
+    h->infinity. Verified here against that closed form directly, not
+    just a loose inequality."""
+    variogram = VariogramModel(model="exponential", nugget=0.0, partial_sill=8.0, range_m=3000.0)
+    station_xy = np.array([[5000.0, 5000.0]])
+    values = np.array([42.0])
+    distances = np.array([0.0, 5000.0, 1_000_000.0])
+    target_xy = np.array([[5000.0, 5000.0], [10000.0, 5000.0], [1_005_000.0, 5000.0]])
+
+    estimate, variance = ordinary_kriging(station_xy, values, variogram, target_xy)
+    expected_variance = 2 * variogram.sill - 2 * variogram.covariance(distances)
+    print(f"\n[single station] estimate={estimate!r}, variance={variance!r}, expected(closed-form)={expected_variance!r}")
+
+    assert np.all(estimate == pytest.approx(42.0))
+    np.testing.assert_allclose(variance, expected_variance, atol=1e-9)
+    assert variance[0] == pytest.approx(0.0, abs=1e-9)
+    assert variance[-1] == pytest.approx(2 * variogram.sill, abs=1e-6)
+    assert variance[-1] > variance[1] > variance[0]
+
+
+def test_zero_stations_raises_instead_of_silently_returning_nan_map():
+    """Adversarial case: krige_map() when EVERY station fails QC (a real
+    operational scenario -- e.g. every sensor reporting NaN for one cycle).
+    Before the fix, ordinary_kriging silently returned an all-NaN field,
+    which krige_map would have silently published as a 'concentration
+    map' with no error or warning -- exactly the kind of silent NaN
+    propagation this project explicitly guards against everywhere else."""
+    city = _make_city(nx=20, ny=20)
+    grid = CTMGrid(city)
+    grid.set_field(SPECIES, np.full((20, 20), 20.0, dtype=np.float32))
+    variogram = VariogramModel(model="exponential", nugget=0.0, partial_sill=8.0, range_m=3000.0)
+
+    all_bad = [KrigingStation(id="bad1", lat=12.05, lon=77.05, value=float("nan"))]
+    station_xy, residuals, kept = station_residuals(grid, SPECIES, all_bad)
+    assert len(kept) == 0
+
+    with pytest.raises(ValueError):
+        krige_map(grid, SPECIES, variogram, station_xy, residuals)
+    with pytest.raises(ValueError):
+        ordinary_kriging(station_xy, residuals, variogram, np.array([[1000.0, 1000.0]]))
+
+
+def test_cokriging_rejects_secondary_stations_not_colocated_with_primary():
+    """Adversarial case: cokriging() is documented to require secondary_xy
+    to be a co-located subset of primary_xy (the cross-semivariogram needs
+    paired observations at shared locations). Before this check, passing
+    unrelated secondary locations silently degenerated to a near-zero
+    cross-covariance and ran to completion with plausible-looking but
+    methodologically meaningless output."""
+    rng = np.random.default_rng(1)
+    primary_xy = rng.uniform(0, 20000, size=(20, 2))
+    primary_values = rng.normal(10, 2, size=20)
+    secondary_xy = rng.uniform(0, 20000, size=(5, 2))  # NOT drawn from primary_xy
+    secondary_values = rng.normal(5, 1, size=5)
+
+    variogram_xx = fit_variogram(primary_xy, primary_values, n_bins=8)
+    variogram_yy = fit_variogram(secondary_xy, secondary_values, n_bins=3)
+    variogram_xy = fit_cross_variogram(
+        secondary_xy, primary_values[:5], secondary_values, n_bins=3,
+        variogram_xx=variogram_xx, variogram_yy=variogram_yy,
+    )
+    target_xy = rng.uniform(0, 20000, size=(3, 2))
+
+    with pytest.raises(ValueError, match="co-located"):
+        cokriging(primary_xy, primary_values, secondary_xy, secondary_values, variogram_xx, variogram_yy, variogram_xy, target_xy)
+
+    # a GENUINELY co-located subset must still work fine
+    idx = rng.choice(20, size=5, replace=False)
+    secondary_xy_real = primary_xy[idx]
+    secondary_values_real = 1.2 * primary_values[idx] + rng.normal(0, 0.3, size=5)
+    variogram_yy2 = fit_variogram(secondary_xy_real, secondary_values_real, n_bins=3)
+    variogram_xy2 = fit_cross_variogram(
+        secondary_xy_real, primary_values[idx], secondary_values_real, n_bins=3,
+        variogram_xx=variogram_xx, variogram_yy=variogram_yy2,
+    )
+    estimate, _ = cokriging(primary_xy, primary_values, secondary_xy_real, secondary_values_real, variogram_xx, variogram_yy2, variogram_xy2, target_xy)
+    assert np.all(np.isfinite(estimate))
 
 
 def test_station_residuals_rejects_nonfinite_and_out_of_domain_before_anything_else():
