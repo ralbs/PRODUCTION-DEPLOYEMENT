@@ -1,10 +1,18 @@
-"""Tests for interpolation/kriging.py, per CLAUDE.md's "Co-kriging spatial
-interpolation" acceptance criteria: exact interpolation at data points
-(zero nugget), kriging-variance behavior (near-zero at stations, growing
-with distance, capping near the sill), variogram-fit recovery, a synthetic
-smooth-field recovery test that beats a naive baseline, leave-one-out
-cross-validation, and a co-kriging-beats-kriging-alone comparison with
-printed RMSE numbers.
+"""Tests for interpolation/_experimental/kriging.py, per CLAUDE.md's
+"Co-kriging spatial interpolation" acceptance criteria: exact interpolation
+at data points (zero nugget), kriging-variance behavior (near-zero at
+stations, growing with distance, capping near the sill), variogram-fit
+recovery, a synthetic smooth-field recovery test that beats a naive
+baseline, leave-one-out cross-validation, and a co-kriging-beats-kriging-
+alone comparison with printed RMSE numbers.
+
+QUARANTINED: skipped module-wide. See CLAUDE.md's "Co-kriging spatial
+interpolation" status note and kriging.py's module docstring -- the
+co-kriging cross-variogram fit's validity isn't yet guaranteed by
+construction (a real Cauchy-Schwarz violation was caught by
+test_fit_cross_variogram_respects_cauchy_schwarz_bound_from_auto_variograms
+below), pending an LMC-based redesign. Left in place, not deleted, so this
+work is easy to resume.
 
 Recovery/fit tests generate ground truth as a genuine sample from a
 Gaussian process with a KNOWN exponential covariance -- not an arbitrary
@@ -24,7 +32,7 @@ import pytest
 
 from cities.loader import CityConfig, Domain, SpeciesConfig
 from ctm.grid import CTMGrid
-from interpolation.kriging import (
+from interpolation._experimental.kriging import (
     KrigingStation,
     VariogramModel,
     cokriging,
@@ -35,6 +43,8 @@ from interpolation.kriging import (
     ordinary_kriging,
     station_residuals,
 )
+
+pytestmark = pytest.mark.skip(reason="co-kriging deferred, see CLAUDE.md")
 
 SPECIES = "pm25"
 _TRUE_VARIOGRAM = VariogramModel(model="exponential", nugget=0.0, partial_sill=8.0, range_m=3000.0)

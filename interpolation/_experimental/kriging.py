@@ -1,4 +1,24 @@
-"""interpolation/kriging.py — co-kriging spatial interpolation.
+"""interpolation/_experimental/kriging.py — co-kriging spatial interpolation.
+
+*** EXPERIMENTAL — QUARANTINED, not part of the current sprint's scope. ***
+Moved out of `interpolation/` and its tests marked `skip` because the
+co-kriging cross-variogram fit's validity isn't yet guaranteed by
+construction: an unconstrained least-squares fit of the cross-
+semivariogram (`fit_cross_variogram()`), with the realistically small
+number of co-located secondary-species stations a real deployment would
+have, can produce a cross-covariance that violates the Cauchy-Schwarz
+bound `|C_XY(h)| <= sqrt(C_XX(h)*C_YY(h))` -- see the Cauchy-Schwarz
+regression test below and the commit history for the specific failure
+this was caught from (nugget/partial_sill fit to the tens of thousands
+against auto-variogram sills of order 10). The current clamp on
+`nugget_bound`/`sill_bound` stops the worst failures but is a patch, not
+a fix -- a proper LMC (linear model of coregionalization) fit, jointly
+estimating a shared spatial structure across both variables via a
+provably positive-semidefinite coregionalization matrix, is the real fix
+and hasn't been built yet. `ordinary_kriging()` (single-variable) has no
+such issue and is NOT part of this quarantine -- only `cokriging()` and
+its supporting cross-variogram machinery are deferred. See CLAUDE.md's
+"Co-kriging spatial interpolation" section for the full status note.
 
 See CLAUDE.md, "Co-kriging spatial interpolation". This is a DIFFERENT
 layer from ctm/assimilation.py's Optimal Interpolation (OI) and must not

@@ -70,7 +70,7 @@ class AdjointTracer:
                 f"(0<=i<{self.nx}, 0<=j<{self.ny}) -- every other consumer of "
                 f"CTMGrid.latlon_to_cell() in this codebase bounds-checks the "
                 f"result before use (see ctm/assimilation.py, "
-                f"attribution/inverse.py, interpolation/kriging.py); an "
+                f"attribution/inverse.py); an "
                 f"out-of-domain receptor would otherwise silently report "
                 f"~100% boundary_inflow_fraction, which looks like a valid "
                 f"result rather than a caller bug."

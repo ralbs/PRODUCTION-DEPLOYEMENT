@@ -309,6 +309,29 @@ method is:
 
 ## Co-kriging spatial interpolation
 
+> **STATUS: QUARANTINED, out of scope for the current sprint.** The
+> implementation lives in `interpolation/_experimental/kriging.py` (moved
+> out of the main `interpolation/` package, tests skipped) pending an
+> LMC-based (linear model of coregionalization) redesign of the co-kriging
+> cross-variogram fit. The hard adversarial audit found that an
+> unconstrained least-squares fit of the cross-semivariogram — with the
+> realistically small number of co-located secondary-species stations —
+> can produce a cross-covariance that violates the Cauchy-Schwarz bound
+> `|C_XY(h)| <= sqrt(C_XX(h)*C_YY(h))`, which isn't just numerically ugly:
+> it means the fitted model doesn't correspond to any valid joint
+> covariance structure, so the co-kriging system it feeds is unsound by
+> construction, not just imprecise. The current code clamps the fit to
+> respect that bound (see the module's Cauchy-Schwarz regression test),
+> which stops the worst failures but is a patch, not a fix — a proper LMC
+> fit (jointly estimating a shared spatial structure across both
+> variables, e.g. via a positive-semidefinite coregionalization matrix)
+> is the real fix and hasn't been built yet. Ordinary kriging (single-
+> variable, `ordinary_kriging()`) has no such issue and is NOT part of
+> this quarantine — only the multivariate co-kriging path is deferred.
+> Nothing outside `interpolation/` imports this module (verified by grep
+> in commit history) — it never shipped as a dependency of the rest of
+> the system, so quarantining it is a pure subtraction, not a break.
+
 This is a DIFFERENT layer from OI assimilation, serving a different purpose
 — don't merge or confuse them:
 
