@@ -44,10 +44,23 @@ below:
     and DO need dividing by 1000 to reach the same physical mg/m³ range.
     Two stations, identical claimed unit string, two different real
     encodings -- this is a data-quality issue in the SOURCE, not a bug in
-    this ETL. `_convert_value` disambiguates PER VALUE against a
-    plausible mg/m³ range (never per-station, since that would have
-    missed exactly this inconsistency) and raises rather than guessing
-    for anything implausible under both interpretations.
+    this ETL.
+
+    The disambiguation is done PER STATION (using that station's MEDIAN
+    raw co value across all its rows), not per individual value -- an
+    earlier version of this ETL disambiguated per-value against a
+    plausible-mg/m3 threshold and shipped a real bug: station 5548 (BTM
+    Layout) is genuinely µg/m3-scale overall (median in the hundreds),
+    but its low-traffic-hour readings (0, 20, 40 -- genuinely clean-air
+    µg/m3 CO, not mg/m3) fell BELOW the per-value plausibility threshold,
+    so they were left unscaled while the rest of the SAME station's SAME
+    sensor's readings were correctly divided by 1000 -- an internally
+    inconsistent conversion of one continuous, single-convention
+    distribution. A station's raw encoding convention is a property of
+    the STATION (or at least its reporting instrument), not of any one
+    reading in isolation, so the decision is made once per station from
+    its median (robust to a few extreme readings at either tail) and
+    applied uniformly to every row from that station.
 
 Non-finite values are rejected with the SAME `np.isfinite()` primitive
 used at every other ingestion boundary in this project (see
@@ -91,24 +104,45 @@ _SOURCE_UNIT_SCALE_TO_UG_M3 = {
 _CO_PLAUSIBLE_MG_M3_MAX = 50.0  # ambient CO essentially never exceeds this under any real condition
 
 
-def _convert_value(species: str, source_unit: str, raw_value: float, target_unit: str) -> float:
+def determine_co_station_conventions(raw_rows: list[dict]) -> dict[str, bool]:
+    """Decide, ONCE PER STATION, whether that station's raw co values are
+    already mg/m3-scale (despite the shared "µg/m³" label) or genuinely
+    µg/m3-scale (needing /1000) -- see the module docstring for why this
+    must be a per-station decision, not per-value. Uses each station's
+    MEDIAN raw co value (robust to a handful of very-low or very-high
+    readings at either tail) against `_CO_PLAUSIBLE_MG_M3_MAX`. Returns
+    `{station_id: needs_scaling_by_1000}`."""
+    raw_by_station: dict[str, list[float]] = {}
+    for row in raw_rows:
+        if row["parameter"] != "co":
+            continue
+        try:
+            v = float(row["value"])
+        except (ValueError, TypeError):
+            continue
+        if np.isfinite(v):
+            raw_by_station.setdefault(row["location_id"], []).append(v)
+
+    conventions: dict[str, bool] = {}
+    for station_id, values in raw_by_station.items():
+        median = float(np.median(values))
+        conventions[station_id] = median > _CO_PLAUSIBLE_MG_M3_MAX
+    return conventions
+
+
+def _convert_value(species: str, source_unit: str, raw_value: float, target_unit: str, co_needs_scaling: bool | None = None) -> float:
     """Convert one raw (parameter, unit, value) triple into the numeric
     convention `city.species[species].unit` declares. Never assumes the
     source's stated unit is correct for a given species -- see the co
-    quirk in the module docstring: two real stations claim the identical
-    "µg/m³" label for co but encode it two different ways, so this
-    disambiguates PER VALUE against a physically plausible mg/m³ range,
-    never per-station or per-species alone."""
+    quirk in the module docstring. `co_needs_scaling` is the STATION-level
+    decision from `determine_co_station_conventions()`, required whenever
+    `species == "co"`."""
     source_unit_norm = source_unit.strip()
 
     if species == "co" and source_unit_norm in ("µg/m³", "ug/m3") and target_unit == "mg_m3":
-        # A raw value this large cannot be mg/m3 already (no real ambient
-        # CO reading is) -- it must be genuine µg/m3 despite the shared
-        # label, so divide by 1000. Otherwise trust it's already mg/m3
-        # (the OTHER real, confirmed encoding under the same label).
-        if raw_value > _CO_PLAUSIBLE_MG_M3_MAX:
-            return raw_value / 1000.0
-        return raw_value
+        if co_needs_scaling is None:
+            raise ValueError("co_needs_scaling is required for species='co' (see determine_co_station_conventions())")
+        return raw_value / 1000.0 if co_needs_scaling else raw_value
 
     if source_unit_norm not in _SOURCE_UNIT_SCALE_TO_UG_M3:
         raise ValueError(f"unrecognized source unit {source_unit!r} for species {species!r}")
@@ -139,6 +173,7 @@ def etl(raw_paths: list[Path], city: CityConfig) -> tuple[list[HindcastRecord], 
     `counts` documents every rejection reason -- never silently drops
     rows without accounting for them."""
     raw_rows = read_raw_export(raw_paths)
+    co_conventions = determine_co_station_conventions(raw_rows)
     counts = {
         "n_raw_rows": len(raw_rows),
         "n_species_not_tracked": 0,
@@ -168,7 +203,10 @@ def etl(raw_paths: list[Path], city: CityConfig) -> tuple[list[HindcastRecord], 
 
         target_unit = city.species[species].unit
         try:
-            value = _convert_value(species, row["units"], raw_value, target_unit)
+            value = _convert_value(
+                species, row["units"], raw_value, target_unit,
+                co_needs_scaling=co_conventions.get(row["location_id"]) if species == "co" else None,
+            )
         except ValueError:
             counts["n_rejected_unit_conversion_error"] += 1
             continue
