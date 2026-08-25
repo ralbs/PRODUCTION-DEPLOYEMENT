@@ -31,9 +31,11 @@ from cities.loader import CityConfig, Domain, EmissionSource, Sensor, SpeciesCon
 from met.weather_station import StationObservation
 from scripts.hindcast_harness import (
     HindcastRecord,
+    diurnal_climatology_baseline,
     load_observations_csv,
     mean_fractional_bias,
     mean_fractional_error,
+    persistence_baseline,
     run_hindcast,
     write_observations_csv,
 )
@@ -164,3 +166,86 @@ def test_hindcast_harness_recovers_missed_source_via_assimilation(tmp_path):
     assert yes["correlation"] > 0.3  # with assimilation, it tracks the true pattern
     assert yes["correlation"] - no["correlation"] > 0.5  # a substantial, not marginal, swing
     assert abs(yes["bias"]) < abs(no["bias"])  # assimilation also shrinks the systematic bias
+
+
+def test_persistence_baseline_error_grows_with_forecast_lead_time():
+    """persistence_baseline() has no model and no physics: it just holds
+    the last real value constant. Its defining, checkable property is that
+    forecast error should get WORSE the further ahead of its single
+    reference point it predicts, since nothing in it can anticipate real
+    change between now and then -- unlike a real transport model, whose
+    error need not grow monotonically with lead time. Uses a hand-built,
+    monotonically diverging series (an exact analytic construction, not a
+    simulator run) so the expected growth is unambiguous, not just
+    plausible."""
+    reference_time = START
+    station_id = "S1"
+    records = [
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=50.0, timestamp=reference_time),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=55.0, timestamp=reference_time + timedelta(hours=1)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=63.0, timestamp=reference_time + timedelta(hours=2)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=74.0, timestamp=reference_time + timedelta(hours=3)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=88.0, timestamp=reference_time + timedelta(hours=4)),
+    ]
+
+    metrics = persistence_baseline(records, station_ids={station_id}, reference_time=reference_time)
+    lead_errors = sorted(metrics[SPECIES]["lead_time_errors"])
+    print(f"\n[persistence baseline] lead_time_errors={lead_errors}")
+
+    assert len(lead_errors) == 4  # the reference_time record itself contributes no forecast
+    abs_errors = [abs(err) for _, err in lead_errors]
+    # strictly increasing: every prediction is the SAME persisted 50.0, and
+    # the true series diverges further from it at every successive lead time
+    assert all(later > earlier for earlier, later in zip(abs_errors, abs_errors[1:]))
+    assert abs_errors == [5.0, 13.0, 24.0, 38.0]  # exact, since the input was hand-constructed
+
+
+def test_diurnal_climatology_baseline_raises_on_zero_local_hour_overlap():
+    """diurnal_climatology_baseline() must not silently return an all-NaN
+    (or otherwise meaningless) metrics dict when the training and
+    validation windows share NO local-hour coverage at all -- a real
+    failure mode (e.g. training data confined to daytime hours, validation
+    confined to night). With utc_offset_hours=0.0, training is built
+    entirely from UTC hours 0-2 and validation entirely from UTC hours
+    12-14, so no (station, species, local_hour) bucket built from training
+    can ever be looked up by a validation record."""
+    station_id = "S1"
+    day0 = datetime(2024, 1, 15, tzinfo=timezone.utc)
+    training = [
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=10.0, timestamp=day0.replace(hour=0)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=12.0, timestamp=day0.replace(hour=1)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=11.0, timestamp=day0.replace(hour=2)),
+    ]
+    validation = [
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=40.0, timestamp=day0.replace(hour=12)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=42.0, timestamp=day0.replace(hour=13)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=41.0, timestamp=day0.replace(hour=14)),
+    ]
+
+    with pytest.raises(ValueError, match="share no"):
+        diurnal_climatology_baseline(training, validation, utc_offset_hours=0.0)
+
+
+def test_diurnal_climatology_baseline_scores_correctly_on_overlapping_windows():
+    """Positive control for the raise test above: with genuine local-hour
+    overlap between training and validation (different DAYS, same hours),
+    the baseline must actually score the validation records against their
+    own hour's training-window mean -- not raise, and not silently drop
+    everything."""
+    station_id = "S1"
+    day0 = datetime(2024, 1, 15, tzinfo=timezone.utc)
+    day1 = datetime(2024, 1, 16, tzinfo=timezone.utc)
+    # hour 8's training mean is (10+14)/2 = 12.0
+    training = [
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=10.0, timestamp=day0.replace(hour=8)),
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=14.0, timestamp=day1.replace(hour=8)),
+    ]
+    validation = [
+        HindcastRecord(station_id=station_id, lat=12.0, lon=77.0, species=SPECIES, value=15.0, timestamp=(day1 + timedelta(days=1)).replace(hour=8)),
+    ]
+
+    metrics = diurnal_climatology_baseline(training, validation, utc_offset_hours=0.0)
+    print(f"\n[diurnal climatology baseline, overlapping windows] {metrics}")
+    assert metrics[SPECIES]["n"] == 1
+    assert metrics[SPECIES]["n_uncovered"] == 0
+    assert metrics[SPECIES]["bias"] == pytest.approx(12.0 - 15.0)  # predicted (climatology mean) minus observed

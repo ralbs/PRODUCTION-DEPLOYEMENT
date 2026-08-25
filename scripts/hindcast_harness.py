@@ -39,6 +39,7 @@ import numpy as np
 
 from cities.loader import CityConfig
 from ctm.assimilation import Observation
+from ctm.emissions import local_hour_from_utc
 from ctm.simulator import Simulator
 from met.weather_station import StationObservation
 
@@ -267,3 +268,140 @@ def skill_metrics(pred: np.ndarray, obs: np.ndarray) -> dict:
         "mfe": mean_fractional_error(pred, obs),
         "n": len(pred),
     }
+
+
+def persistence_baseline(
+    observations: list[HindcastRecord],
+    station_ids: set[str],
+    reference_time: datetime,
+) -> dict:
+    """No model, no physics: for each (station_id, species) pair among
+    `station_ids`, the prediction for every REAL observation AFTER
+    `reference_time` is simply the value of that (station, species)'s
+    most recent REAL observation AT OR BEFORE `reference_time`, held
+    constant -- the standard "can you beat doing nothing" floor. A pair
+    with no observation at or before `reference_time` contributes no
+    predictions (nothing to persist from) and is silently skipped, not
+    treated as an error -- a genuinely absent baseline reference is a
+    real, unremarkable outcome for a station that just hadn't reported
+    yet, not a data-quality problem.
+
+    Returns `{species: {"rmse", "bias", "correlation", "mfb", "mfe", "n",
+    "lead_time_errors": [(lead_time_seconds, signed_error), ...]}}` --
+    the same shape run_hindcast() returns, PLUS `lead_time_errors` so
+    callers (and this function's own test) can verify error grows with
+    forecast lead time: a persistence forecast should get WORSE the
+    further ahead of its single reference point it predicts, since it
+    has no physics to actually simulate what changes in between --
+    unlike a real transport model, which should not degrade this way.
+    """
+    if reference_time.tzinfo is None:
+        reference_time = reference_time.replace(tzinfo=timezone.utc)
+
+    by_key: dict[tuple[str, str], list[HindcastRecord]] = {}
+    for rec in observations:
+        if rec.station_id not in station_ids:
+            continue
+        by_key.setdefault((rec.station_id, rec.species), []).append(rec)
+
+    predictions: dict[str, list[tuple[float, float, float]]] = {}  # species -> [(pred, obs, lead_s), ...]
+    for (station_id, species), recs in by_key.items():
+        recs.sort(key=lambda r: r.timestamp)
+        reference_recs = [r for r in recs if r.timestamp <= reference_time]
+        if not reference_recs:
+            continue
+        reference_rec = reference_recs[-1]  # most recent at or before reference_time
+        for rec in recs:
+            if rec.timestamp <= reference_time:
+                continue
+            lead_s = (rec.timestamp - reference_rec.timestamp).total_seconds()
+            predictions.setdefault(species, []).append((reference_rec.value, rec.value, lead_s))
+
+    metrics = {}
+    for species, triples in predictions.items():
+        pred_arr = np.array([p for p, _, _ in triples])
+        obs_arr = np.array([o for _, o, _ in triples])
+        m = skill_metrics(pred_arr, obs_arr)
+        m["lead_time_errors"] = [(lead_s, p - o) for p, o, lead_s in triples]
+        metrics[species] = m
+    return metrics
+
+
+def diurnal_climatology_baseline(
+    training_observations: list[HindcastRecord],
+    validation_observations: list[HindcastRecord],
+    utc_offset_hours: float,
+) -> dict:
+    """No persistence, no physics: fits a simple mean-by-LOCAL-HOUR
+    profile per (station_id, species) from `training_observations`
+    (bucketed by `int(local_hour_from_utc(...))`, the SAME local-hour
+    convention ctm/emissions.py's diurnal-profile indexing uses -- one
+    source of truth, not a duplicated formula), then predicts every
+    `validation_observations` record using its own local hour's
+    TRAINING-window climatological mean -- "what does this station and
+    species usually look like at this time of day." This is specifically
+    designed to catch a model whose apparent skill is just matching the
+    typical diurnal shape: such a model should score similarly to this
+    baseline, not obviously better.
+
+    MUST be fit and scored on genuinely disjoint windows --
+    `training_observations` and `validation_observations` should never
+    overlap in time; this function does not (and cannot) verify that
+    itself, since it only sees the records it's given, not the windows
+    they were drawn from -- that separation is the caller's
+    responsibility, per this project's train/validate rule.
+
+    A (station_id, species, local_hour) bucket with NO training-window
+    coverage cannot be scored (there's no climatological mean to predict
+    from); such validation records are excluded and counted under
+    `n_uncovered`. If EVERY validation record across ALL species ends up
+    uncovered (e.g. training and validation windows share no local-hour
+    coverage at all -- a real, checkable failure mode, not hypothetical),
+    raises ValueError rather than silently returning an all-NaN metrics
+    dict that could be mistaken for "ran fine, just no signal."
+
+    Returns `{species: {"rmse", "bias", "correlation", "mfb", "mfe", "n",
+    "n_uncovered"}}`.
+    """
+    climatology: dict[tuple[str, str, int], list[float]] = {}
+    for rec in training_observations:
+        hour_utc = rec.timestamp.hour + rec.timestamp.minute / 60.0 + rec.timestamp.second / 3600.0
+        local_hour = local_hour_from_utc(hour_utc, utc_offset_hours)
+        bucket = int(local_hour) % 24
+        climatology.setdefault((rec.station_id, rec.species, bucket), []).append(rec.value)
+    climatology_mean = {key: float(np.mean(vals)) for key, vals in climatology.items()}
+
+    predictions: dict[str, list[tuple[float, float]]] = {}
+    n_uncovered = 0
+    for rec in validation_observations:
+        hour_utc = rec.timestamp.hour + rec.timestamp.minute / 60.0 + rec.timestamp.second / 3600.0
+        local_hour = local_hour_from_utc(hour_utc, utc_offset_hours)
+        bucket = int(local_hour) % 24
+        key = (rec.station_id, rec.species, bucket)
+        if key not in climatology_mean:
+            n_uncovered += 1
+            continue
+        predictions.setdefault(rec.species, []).append((climatology_mean[key], rec.value))
+
+    total_usable = sum(len(pairs) for pairs in predictions.values())
+    if total_usable == 0:
+        raise ValueError(
+            "diurnal_climatology_baseline(): zero validation records could be scored -- "
+            "the training and validation windows share no (station, species, local_hour) "
+            "coverage at all. This usually means the validation window's local-hour range "
+            "doesn't overlap the training window's at all (e.g. training covers only "
+            "daytime hours, validation only night); check the windows, don't ignore this."
+        )
+
+    metrics = {}
+    for species, pairs in predictions.items():
+        pred_arr = np.array([p for p, _ in pairs])
+        obs_arr = np.array([o for _, o in pairs])
+        m = skill_metrics(pred_arr, obs_arr)
+        m["n_uncovered"] = sum(
+            1 for rec in validation_observations
+            if rec.species == species
+            and (rec.station_id, rec.species, int(local_hour_from_utc(rec.timestamp.hour + rec.timestamp.minute / 60.0 + rec.timestamp.second / 3600.0, utc_offset_hours)) % 24) not in climatology_mean
+        )
+        metrics[species] = m
+    return metrics
