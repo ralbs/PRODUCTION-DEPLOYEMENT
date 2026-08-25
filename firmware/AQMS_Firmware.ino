@@ -213,14 +213,6 @@ void loop() {
 
   PMSData fresh = readPMS();
   if (fresh.valid) cachedPMS = fresh;
-  // Debug-log PMS validity only when it flips, so a dead/quiet PMS stream
-  // doesn't spam the serial console. Live PM is in every telemetry payload.
-  static bool lastPmsValid = false;
-  if (fresh.valid != lastPmsValid) {
-    lastPmsValid = fresh.valid;
-    Serial.printf("[DEBUG] PMS5003 — valid: %d, pm1: %d, pm2_5: %d, pm10: %d\n",
-                  fresh.valid, cachedPMS.pm1, cachedPMS.pm2_5, cachedPMS.pm10);
-  }
 
   if (millis() - lastSend >= TELEMETRY_INTERVAL_MS) {
     lastSend = millis();
