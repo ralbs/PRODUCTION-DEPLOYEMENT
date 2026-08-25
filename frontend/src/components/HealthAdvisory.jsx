@@ -59,7 +59,7 @@ const POLLUTANT_INFO = {
   pm2_5: { name: "PM2.5", limit: "60 µg/m³ (24h avg)", note: "Fine particles — penetrate deep into lungs" },
   pm10:  { name: "PM10",  limit: "100 µg/m³ (24h avg)", note: "Coarse particles — irritate respiratory tract" },
   no2:   { name: "NO₂",   limit: "80 µg/m³ (annual)",  note: "Nitrogen dioxide — from combustion sources" },
-  // o3:  { name: "O₃",    limit: "100 µg/m³ (8h avg)",  note: "Ground-level ozone — triggers asthma" },  // disabled (hardware not connected)
+  o3:   { name: "O₃",    limit: "100 µg/m³ (8h avg)",  note: "Ground-level ozone — triggers asthma" },
   co:    { name: "CO",    limit: "4 mg/m³ (8h avg)",    note: "Carbon monoxide — impairs oxygen delivery" },
 };
 

@@ -57,10 +57,11 @@
 #define GAS_A_CO           99.042f
 #define GAS_B_CO           -1.518f
 
-// O3 (MQ-131) is permanently faulted on this board — the module's output is
-// pinned near ground (no response), so the channel is always shipped as -1.
-// Set to 1 only after the sensor/ADC path is repaired and re-verified.
-#define ENABLE_GAS_O3      0
+// O3 (MQ-131) channel re-enabled — the module is still suspect (output pinned
+// near ground on this board), but the firmware guards handle that: a frozen
+// channel reports -1 and a near-baseline ratio reports 0 (below detection),
+// so no garbage can reach the DB. Set to 0 to hard-fault the channel again.
+#define ENABLE_GAS_O3      1
 
 // ============ Gas units & sanity guards ============
 // The telemetry API units contract: gases are stored in µg/m³. The firmware

@@ -77,7 +77,7 @@ flowchart LR
 | CO (`mq7_co`) | MQ-7 | 🔧 calibratable | the only gas channel with real signal range (ratio 0.68–1.28) **and** a KSPCB reference. Calibrated server-side by `scripts/fit-co.js`; trusted only once it appears in `TRUSTED_GAS_CHANNELS` |
 | NO₂ | MICS-6814 OX | ❌ never | raw ratio is stuck in a ±10 % noise band around 1.0 — signal-to-noise too poor to fit. Stays nulled permanently |
 | NH₃ | MICS-6814 RED | ❌ never | same problem as NO₂ (ratio ≈ 1.00 ± 0.02) |
-| O₃ | MQ-131 | ❌ hardware fault | module output pinned near ground (0.021 V, no response) — firmware ships `-1` unconditionally (`ENABLE_GAS_O3 0`) until the module is replaced |
+| O₃ | MQ-131 | ⚠️ enabled, module suspect | re-enabled by request (`ENABLE_GAS_O3 1`) — but the module's output is pinned near ground (0.021 V, no response), so the guards report only `0` (below detection) or `-1` (frozen) until the hardware is fixed |
 | CO (`co`) | MICS-6814 RED | ❌ disabled | pin not connected on PCB — always `-1` |
 | H₂S / H₂ / MQ-135 | MQ-136 / MQ-8 / MQ-135 | ⚠️ trend-only | values move but there is **no reference** to fit against (KSPCB has SO₂, not H₂S; no H₂; MQ-135 is a generic AQ proxy) |
 
@@ -203,6 +203,6 @@ flowchart LR
 1. Frontend deployment host — dashboard fix (commit `3a92890`) is built but not live anywhere.
 2. Reflash the board with the below-detection floor + `ENABLE_GAS_O3 0` firmware, then let it soak so `scripts/fit-co.js` has enough hour-of-day coverage for a CO calibration.
 3. Run `scripts/cleanup-1970.js` on the live DB to purge the pre-NTP 1970-timestamp rows.
-4. Replace the dead MQ-131 (O₃) module if O₃ is ever wanted — the channel is permanently faulted until then.
+4. Replace the dead MQ-131 (O₃) module if O₃ is ever wanted — the channel is enabled but the module reads pinned near ground, so it reports only 0 / -1 until then.
 5. Root `README.md` diagrams still describe the pre-refactor system (ppm storage, old schema) and should be brought in line with this document.
 6. Optional rigor upgrade: span-gas can (50 ppm CO) + `CALCO` firmware command for a true two-point CO calibration.
