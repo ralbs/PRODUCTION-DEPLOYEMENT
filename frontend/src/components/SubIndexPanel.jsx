@@ -1,11 +1,18 @@
 import { conv } from "../api";
 
 const POLLUTANTS = [
-  { key: "pm2_5", label: "PM2.5", unit: "µg/m³", max: 500, fmt: (v) => v?.toFixed(1) ?? "–" },
-  { key: "pm10",  label: "PM10",  unit: "µg/m³", max: 600, fmt: (v) => v?.toFixed(1) ?? "–" },
-  { key: "no2",   label: "NO₂",   unit: "µg/m³", max: 400, fmt: (v) => conv.no2_ugm3(v) ?? "–" },
-  { key: "o3",    label: "O₃",    unit: "µg/m³", max: 400, fmt: (v) => conv.o3_ugm3(v) ?? "–" },
-  { key: "mq7_co", siKey: "co", label: "CO", unit: "mg/m³",  max: 50,  fmt: (v) => conv.co_mgm3(v) ?? "–" },
+  { key: "pm1",     label: "PM1",     unit: "µg/m³", max: 1000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "pm2_5",   label: "PM2.5",   unit: "µg/m³", max: 1000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "pm10",    label: "PM10",    unit: "µg/m³", max: 1000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "co",      label: "CO",      unit: "µg/m³", max: 1000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "no2",     label: "NO₂",     unit: "µg/m³", max: 3000, fmt: (v) => conv.no2_ugm3(v) ?? "–" },
+  { key: "o3",      label: "O₃",      unit: "µg/m³", max: 3000, fmt: (v) => conv.o3_ugm3(v) ?? "–" },
+  { key: "nh3",     label: "NH₃",     unit: "µg/m³", max: 3000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "h2s",     label: "H₂S",     unit: "µg/m³", max: 3000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "mq135",   label: "MQ-135",  unit: "µg/m³", max: 3000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "h2",      label: "H₂",      unit: "µg/m³", max: 3000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "mq7_co",  siKey: "co", label: "MQ-7 CO", unit: "µg/m³", max: 5000, fmt: (v) => v?.toFixed(1) ?? "–" },
+  { key: "voc_gas_ohm", label: "VOC", unit: "Ω",     max: 50000, fmt: (v) => v?.toFixed(0) ?? "–" },
 ];
 
 function siColor(si) {

@@ -50,4 +50,15 @@ async function preparePollutants(pollutants, diagnostics, deviceId) {
   return sanitizePollutants(normalizeGasUnits(calibrated));
 }
 
-module.exports = { preparePollutants, normalizeGasUnits };
+/**
+ * Display variant: returns EVERY channel in µg/m³ (units-converted but NOT
+ * trust/sanity-filtered) so the dashboard can show all pollutant cards. The
+ * AQI is still computed from preparePollutants()' trusted subset, so untrusted
+ * or broken channels never poison the index — they just appear on screen.
+ */
+async function prepareDisplayPollutants(pollutants, diagnostics, deviceId) {
+  const calibrated = await applyCalibration(pollutants, diagnostics, deviceId);
+  return normalizeGasUnits(calibrated);
+}
+
+module.exports = { preparePollutants, prepareDisplayPollutants, normalizeGasUnits };

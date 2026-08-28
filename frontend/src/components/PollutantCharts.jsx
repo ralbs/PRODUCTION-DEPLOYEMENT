@@ -45,7 +45,9 @@ export default function PollutantCharts({ history, chartType = "pm" }) {
     time: fmtTs(h.timestamp),
     "NO₂ (µg/m³)": conv.no2_ugm3(h.pollutants?.no2),
     "O₃ (µg/m³)":  conv.o3_ugm3(h.pollutants?.o3),
-    "CO (mg/m³)":  conv.co_mgm3(h.pollutants?.mq7_co ?? h.pollutants?.co),
+    "NH₃ (µg/m³)": h.pollutants?.nh3 ?? null,
+    "H₂S (µg/m³)": h.pollutants?.h2s ?? null,
+    "H₂ (µg/m³)":  h.pollutants?.h2 ?? null,
   }));
 
   const rangeButtons = (
@@ -68,8 +70,10 @@ export default function PollutantCharts({ history, chartType = "pm" }) {
           <Tooltip {...TOOLTIP_STYLE} />
           <Legend wrapperStyle={{ fontSize: 10, color: "var(--text-dim)" }} />
           <Line type="monotone" dataKey="NO₂ (µg/m³)" stroke="#f97316" strokeWidth={1.8} dot={false} connectNulls />
-          {/* <Line type="monotone" dataKey="O₃ (µg/m³)" stroke="#22c55e" strokeWidth={1.8} dot={false} connectNulls /> disabled (hardware not connected) */}
-          <Line type="monotone" dataKey="CO (mg/m³)"  stroke="#facc15" strokeWidth={1.8} dot={false} connectNulls />
+          <Line type="monotone" dataKey="O₃ (µg/m³)"  stroke="#22c55e" strokeWidth={1.8} dot={false} connectNulls />
+          <Line type="monotone" dataKey="NH₃ (µg/m³)" stroke="#a3e635" strokeWidth={1.8} dot={false} connectNulls />
+          <Line type="monotone" dataKey="H₂S (µg/m³)" stroke="#84cc16" strokeWidth={1.8} dot={false} connectNulls />
+          <Line type="monotone" dataKey="H₂ (µg/m³)"  stroke="#38bdf8" strokeWidth={1.8} dot={false} connectNulls />
         </LineChart>
       </ResponsiveContainer>
     );

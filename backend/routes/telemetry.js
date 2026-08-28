@@ -3,7 +3,7 @@ const rateLimit = require("express-rate-limit");
 const Telemetry = require("../models/Telemetry");
 const { authenticateDevice } = require("../middleware/auth");
 const { calculateAQI } = require("../lib/aqi");
-const { preparePollutants, normalizeGasUnits } = require("../lib/prepare");
+const { preparePollutants, prepareDisplayPollutants, normalizeGasUnits } = require("../lib/prepare");
 const { forwardToThingSpeak } = require("../lib/thingspeak");
 
 const router = express.Router();
@@ -121,8 +121,9 @@ router.get("/latest", async (req, res) => {
     .lean();
 
   if (!doc) return res.status(404).json({ error: "No telemetry found for this device" });
-  const pollutants = await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
-  res.json({ ...doc, pollutants, aqi: calculateAQI(pollutants) });
+  const trusted = await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
+  const display = await prepareDisplayPollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
+  res.json({ ...doc, pollutants: display, aqi: calculateAQI(trusted) });
 });
 
 // -------------------------------------------------------------------
@@ -150,8 +151,9 @@ router.get("/history", async (req, res) => {
 
   const out = [];
   for (const d of docs) {
-    const pollutants = await preparePollutants(d.pollutants, d.diagnostics, d.meta.device_id);
-    out.push({ ...d, pollutants, aqi: calculateAQI(pollutants) });
+    const trusted = await preparePollutants(d.pollutants, d.diagnostics, d.meta.device_id);
+    const display = await prepareDisplayPollutants(d.pollutants, d.diagnostics, d.meta.device_id);
+    out.push({ ...d, pollutants: display, aqi: calculateAQI(trusted) });
   }
   res.json(out);
 });

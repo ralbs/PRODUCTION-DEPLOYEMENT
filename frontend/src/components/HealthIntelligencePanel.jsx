@@ -238,13 +238,19 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
       {/* Pollutant raw values */}
       <div style={{ background: "var(--bg-card2)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>Current Readings</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
           {[
+            { label: "PM1",   value: p.pm1 != null ? +(+p.pm1).toFixed(1) : null, unit: "µg/m³", who: null, color: "#94a3b8" },
             { label: "PM2.5", value: p.pm2_5, unit: "µg/m³", who: 5, color: "#ef4444" },
             { label: "PM10",  value: p.pm10,  unit: "µg/m³", who: 15, color: "#f97316" },
             { label: "NO₂",   value: p.no2 != null ? +(+p.no2).toFixed(1) : null, unit: "µg/m³", who: 10, color: "#facc15" },
             { label: "O₃",    value: p.o3 != null ? +(+p.o3).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },
-            { label: "CO",    value: (p.mq7_co ?? p.co) != null ? +((p.mq7_co ?? p.co) / 1000).toFixed(2) : null, unit: "mg/m³", who: null, color: "#38bdf8" },
+            { label: "NH₃",   value: p.nh3 != null ? +(+p.nh3).toFixed(1) : null,  unit: "µg/m³", who: null, color: "#a3e635" },
+            { label: "H₂S",   value: p.h2s != null ? +(+p.h2s).toFixed(1) : null,  unit: "µg/m³", who: null, color: "#84cc16" },
+            { label: "MQ-135", value: p.mq135 != null ? +(+p.mq135).toFixed(1) : null, unit: "µg/m³", who: null, color: "#2dd4bf" },
+            { label: "H₂",    value: p.h2 != null ? +(+p.h2).toFixed(1) : null,     unit: "µg/m³", who: null, color: "#38bdf8" },
+            { label: "CO",    value: (p.mq7_co ?? p.co) != null ? +((p.mq7_co ?? p.co)).toFixed(1) : null, unit: "µg/m³", who: null, color: "#60a5fa" },
+            { label: "VOC",   value: p.voc_gas_ohm != null ? +(p.voc_gas_ohm).toFixed(0) : null, unit: "Ω", who: null, color: "#f472b6" },
           ].map((item) => {
             const over = item.who && item.value > item.who * 3;
             return (

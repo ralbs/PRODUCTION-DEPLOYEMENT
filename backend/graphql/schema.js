@@ -1,6 +1,6 @@
 const { gql } = require("apollo-server-express");
 const Telemetry = require("../models/Telemetry");
-const { preparePollutants } = require("../lib/prepare");
+const { prepareDisplayPollutants } = require("../lib/prepare");
 
 const typeDefs = gql`
   type Location {
@@ -70,7 +70,7 @@ async function toReading(doc) {
     station_id: doc.meta.station_id,
     location: doc.location,
     weather: doc.weather,
-    pollutants: await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id),
+    pollutants: await prepareDisplayPollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id),
     battery: doc.battery,
     health: doc.health,
     flags: doc.flags,
