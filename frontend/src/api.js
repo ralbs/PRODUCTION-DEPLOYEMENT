@@ -25,8 +25,9 @@ export const api = {
   estimatePlume: (body)              => post("/api/plume/estimate", { ...body, grid: true }),
 };
 
-// Unit helpers — gases already arrive from the backend in µg/m³ (see
-// backend/lib/aqi.js units contract), so only CO needs scaling: µg/m³ → mg/m³.
+// Unit helpers — the backend normalizes every read path to µg/m³ (the board
+// ships ppm, converted on read in lib/prepare.js), so gases arrive in µg/m³
+// (see backend/lib/aqi.js units contract). Only CO needs scaling: µg/m³ → mg/m³.
 export const conv = {
   no2_ugm3: (v) => v == null ? null : +(+v).toFixed(1),
   o3_ugm3:  (v) => v == null ? null : +(+v).toFixed(1),
