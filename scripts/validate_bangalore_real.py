@@ -1,47 +1,58 @@
 """scripts/validate_bangalore_real.py — real-data validation run against
-the two confirmed real Bangalore stations (see data/raw/openaq_bangalore/
-and cities/bangalore.json's sensors), now driven by GENUINELY REAL
-meteorology (see met/ingest_real_met.py: station 43295 "Bangalore",
-Meteostat's public archive, 2019-07-01 to 2019-07-20, 3-hourly, verified
-schema). Every earlier run of this script used the climatology FALLBACK
-(a documented but non-real constant approximation) -- meaning transport
-(advection/diffusion) had never actually been tested against reality.
-This is the first run where it has: real wind speed/direction/temp/RH for
-the exact week, held constant between real 3-hourly reports (never
-fabricated/interpolated finer than what was actually observed).
+FIVE confirmed real Bangalore stations (see data/raw/openaq_bangalore/ and
+cities/bangalore.json's sensors), driven by GENUINELY REAL meteorology
+(see met/ingest_real_met.py: station 43295 "Bangalore", Meteostat's public
+archive, 2019-07-01 to 2019-07-20, 3-hourly, verified schema).
+
+Phase 15 of PROMPT_FLOW_VALIDATION.md: re-runs the spatial and temporal
+holdouts now that (a) real wind exists (Phase 12) and (b) a tight cluster
+of 4 stations well inside localisation_radius_m=10000 exists alongside the
+original 6983/6984 pair, which sits just OUTSIDE it (Phase 13) -- so a
+spatial holdout can finally test whether OI assimilation has a real direct
+effect, not just a diurnal-shape coincidence. Every result below is now
+also checked against two TRIVIAL baselines (Phase 14):
+persistence_baseline() (repeat the last observed value) and
+diurnal_climatology_baseline() (typical value for that station/species/
+local-hour, fit on a disjoint training window) -- a CTM number only means
+something once it's shown to beat both.
 
 Emission sources are still the pre-existing SCHEMATIC bangalore.json
 inventory (never calibrated against real 2019 emissions) -- absolute
 concentration levels are not expected to match reality without
 assimilation; that's exactly why assimilation and the spatial/temporal
 holdouts below are the right experiment design to isolate what the model
-CAN do (track real spatiotemporal structure once nudged by real data,
-now through REAL transport) from what it cannot (predict absolute
-pollution from an invented inventory).
+CAN do (track real spatiotemporal structure once nudged by real data)
+from what it cannot (predict absolute pollution from an invented
+inventory).
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from cities.loader import load_city
 from ctm.assimilation import Observation
 from ctm.simulator import Simulator
 from met.ingest_real_met import RealMetSeries, load_real_met_series
-from scripts.hindcast_harness import load_observations_csv, run_hindcast, run_hindcast_temporal_holdout
+from scripts.hindcast_harness import (
+    HindcastRecord,
+    diurnal_climatology_baseline,
+    load_observations_csv,
+    persistence_baseline,
+    run_hindcast,
+    run_hindcast_temporal_holdout,
+)
 
 OBS_CSV = "data/processed/bangalore_openaq_20190710_20190716.csv"
 MET_CSV = "data/raw/meteostat_bangalore/43295_201907.csv"
 
-
-def _print_metrics(label: str, metrics: dict) -> None:
-    print(f"\n--- {label} ---")
-    for species, m in sorted(metrics.items()):
-        print(
-            f"  {species}: n={m['n']:4d}  rmse={m['rmse']:.3f}  bias={m['bias']:+.3f}  "
-            f"corr={m['correlation']:+.3f}  MFB={m['mfb']*100:+.1f}%  MFE={m['mfe']*100:.1f}%"
-        )
-        read = _boylan_russell_read(m["mfb"], m["mfe"])
-        print(f"    -> {read}")
+# Station names, for readable output only (ids are the source of truth).
+STATION_NAMES = {
+    "6983": "Hombegowda Nagar",
+    "6984": "Hebbal",
+    "6973": "Jayanagar 5th Block",
+    "5548": "BTM Layout",
+    "6975": "Silk Board",
+}
 
 
 def _boylan_russell_read(mfb: float, mfe: float) -> str:
@@ -55,10 +66,138 @@ def _boylan_russell_read(mfb: float, mfe: float) -> str:
         return "insufficient data to classify"
     mfb_pct, mfe_pct = abs(mfb) * 100, mfe * 100
     if mfe_pct <= 50.0 and mfb_pct <= 30.0:
-        return f"within the GOAL band (MFE<=50%, |MFB|<=30%)"
+        return "within the GOAL band (MFE<=50%, |MFB|<=30%)"
     if mfe_pct <= 75.0 and mfb_pct <= 60.0:
-        return f"within the CRITERIA band (MFE<=75%, |MFB|<=60%) but not the tighter GOAL band"
-    return f"OUTSIDE both the CRITERIA and GOAL bands"
+        return "within the CRITERIA band (MFE<=75%, |MFB|<=60%) but not the tighter GOAL band"
+    return "OUTSIDE both the CRITERIA and GOAL bands"
+
+
+def _print_metrics(label: str, metrics: dict) -> None:
+    print(f"\n--- {label} ---")
+    for species, m in sorted(metrics.items()):
+        print(
+            f"  {species}: n={m['n']:4d}  rmse={m['rmse']:.3f}  bias={m['bias']:+.3f}  "
+            f"corr={m['correlation']:+.3f}  MFB={m['mfb']*100:+.1f}%  MFE={m['mfe']*100:.1f}%"
+        )
+        print(f"    -> {_boylan_russell_read(m['mfb'], m['mfe'])}")
+
+
+def _fmt(m: dict | None) -> str:
+    if not m or m.get("n", 0) == 0:
+        return "  (no data)"
+    return (
+        f"n={m['n']:4d}  rmse={m['rmse']:7.3f}  bias={m['bias']:+7.3f}  "
+        f"corr={m['correlation']:+.3f}  MFB={m['mfb']*100:+6.1f}%  MFE={m['mfe']*100:5.1f}%"
+    )
+
+
+def comparison_table(
+    label: str,
+    city,
+    start_time: datetime,
+    n_steps: int,
+    records: list[HindcastRecord],
+    held_out_ids: set[str],
+    met_stations,
+    hour_utc0: float,
+    training_end: datetime,
+    assimilated_ids: set[str] | None = None,
+    precomputed_assim: dict | None = None,
+) -> dict:
+    """Runs and prints the Phase 15 four-way comparison for one experiment:
+    CTM-assimilated, CTM-no-assimilation-control, persistence-baseline,
+    diurnal-climatology-baseline -- all scored on the EXACT SAME held-out
+    records (only those AFTER `training_end`, so the climatology baseline's
+    own training/validation split is genuinely disjoint, per this
+    project's train/validate rule; CTM-assimilated and CTM-control are
+    restricted to the same post-training_end records for a fair,
+    matched comparison, even though the CTM itself never uses held-out
+    station data for assimilation regardless of timestamp).
+
+    Either pass `assimilated_ids` (disjoint from `held_out_ids`) to have
+    this function run the CTM-assimilated case itself via `run_hindcast()`
+    (the spatial-holdout shape: assimilation runs continuously for the
+    whole period), OR pass `precomputed_assim` -- a metrics dict already
+    computed by the caller -- when the assimilation schedule isn't
+    expressible by continuous run_hindcast() at all (the temporal
+    holdout's train-then-stop schedule, via run_hindcast_temporal_holdout(),
+    needs its OWN function and cannot reuse assimilated_ids/held_out_ids
+    as disjoint sets since it assimilates and later scores the SAME
+    stations). Exactly one of the two must be given.
+
+    Returns the four raw metrics dicts, keyed
+    "ctm_assim"/"ctm_control"/"persistence"/"climatology", for callers
+    that want the numbers beyond the printed table.
+    """
+    if (assimilated_ids is None) == (precomputed_assim is None):
+        raise ValueError("comparison_table(): pass exactly one of assimilated_ids or precomputed_assim")
+
+    print("\n" + "=" * 78)
+    print(label)
+    print("=" * 78)
+
+    # Held-out records are only scored in the validation window (after
+    # training_end); assimilated-station records are left untouched (full
+    # period) since spatial-holdout assimilation runs the whole run, not
+    # just a training window.
+    filtered_for_ctm = [
+        r for r in records if not (r.station_id in held_out_ids and r.timestamp <= training_end)
+    ]
+    training_obs = [r for r in records if r.station_id in held_out_ids and r.timestamp <= training_end]
+    validation_obs = [r for r in records if r.station_id in held_out_ids and r.timestamp > training_end]
+
+    if precomputed_assim is not None:
+        metrics_assim = precomputed_assim
+    else:
+        metrics_assim = run_hindcast(
+            city, start_time, n_steps, filtered_for_ctm,
+            assimilated_station_ids=assimilated_ids, held_out_station_ids=held_out_ids,
+            met_stations=met_stations, hour_utc0=hour_utc0,
+        )
+    metrics_control = run_hindcast(
+        city, start_time, n_steps, filtered_for_ctm,
+        assimilated_station_ids=set(), held_out_station_ids=held_out_ids,
+        met_stations=met_stations, hour_utc0=hour_utc0,
+    )
+    metrics_persist = persistence_baseline(records, held_out_ids, reference_time=training_end)
+    try:
+        metrics_clim = diurnal_climatology_baseline(training_obs, validation_obs, city.utc_offset_hours)
+    except ValueError as exc:
+        print(f"  [diurnal_climatology_baseline unavailable: {exc}]")
+        metrics_clim = {}
+
+    species_all = sorted(set(metrics_assim) | set(metrics_control) | set(metrics_persist) | set(metrics_clim))
+    for species in species_all:
+        print(f"\n  {species}:")
+        print(f"    CTM-assimilated  : {_fmt(metrics_assim.get(species))}")
+        print(f"    CTM-control      : {_fmt(metrics_control.get(species))}")
+        print(f"    persistence      : {_fmt(metrics_persist.get(species))}")
+        print(f"    climatology      : {_fmt(metrics_clim.get(species))}")
+
+        assim_m = metrics_assim.get(species)
+        if assim_m and assim_m.get("n", 0) > 0:
+            beats = []
+            loses = []
+            for name, other in (("persistence", metrics_persist.get(species)), ("climatology", metrics_clim.get(species))):
+                if not other or other.get("n", 0) == 0:
+                    continue
+                (beats if assim_m["rmse"] < other["rmse"] else loses).append(name)
+            if beats and not loses:
+                verdict = f"beats BOTH baselines (lower RMSE than {', '.join(beats)})"
+            elif beats and loses:
+                verdict = f"beats {', '.join(beats)} but NOT {', '.join(loses)} (mixed)"
+            elif loses:
+                verdict = f"beats NEITHER baseline (RMSE >= {', '.join(loses)})"
+            else:
+                verdict = "no baseline available for comparison"
+            print(f"    verdict          : {verdict}")
+
+    return {
+        "ctm_assim": metrics_assim,
+        "ctm_control": metrics_control,
+        "persistence": metrics_persist,
+        "climatology": metrics_clim,
+    }
 
 
 def main() -> None:
@@ -90,60 +229,80 @@ def main() -> None:
         "COVID-anomalous -- but the archive as a whole does not extend past April 2020, so "
         "it cannot represent current (2025-2026) traffic/emissions conditions either way."
     )
+    print(
+        "\nStation pair separations (see cities/bangalore.json's _sensor_pair_distances_m): "
+        "6983<->6984 = 10,097m (just OUTSIDE localisation_radius_m=10000 -- last round's only "
+        "real pair). 6973<->5548 = 1,381m (the tightest pair, well INSIDE the radius -- new "
+        "this round). Both are used below for a direct inside-vs-outside-radius comparison."
+    )
 
     hour_utc0 = start_time.hour + start_time.minute / 60.0
     training_days = 4
     training_steps = int(training_days * 86400 / city.dt_seconds)
-
-    # === Spatial holdout, both directions ===
-    print("\n" + "=" * 70)
-    print("SPATIAL HOLDOUT")
-    print("=" * 70)
-    metrics_assim_6983 = run_hindcast(
-        city, start_time, n_steps, records,
-        assimilated_station_ids={"6983"}, held_out_station_ids={"6984"},
-        met_stations=met_stations, hour_utc0=hour_utc0,
-    )
-    _print_metrics("assimilate 6983 (Hombegowda Nagar) -> validate against held-out 6984 (Hebbal)", metrics_assim_6983)
-
-    metrics_assim_6984 = run_hindcast(
-        city, start_time, n_steps, records,
-        assimilated_station_ids={"6984"}, held_out_station_ids={"6983"},
-        met_stations=met_stations, hour_utc0=hour_utc0,
-    )
-    _print_metrics("assimilate 6984 (Hebbal) -> validate against held-out 6983 (Hombegowda Nagar)", metrics_assim_6984)
-
-    # === Diagnostic control: NO assimilation at all, scored against BOTH ===
-    # real stations. The two stations are 10,097 m apart -- just OUTSIDE
-    # bangalore.json's localisation_radius_m=10000, so a DIRECT OI
-    # correction at one station has ZERO effect on the other cell that
-    # same step. Under the OLD constant-climatology run this made the
-    # "assimilated" and "no-assimilation" results statistically
-    # indistinguishable for co/pm10/pm25 (apparent skill was diurnal-
-    # profile-SHAPE coincidence, not real transport). With REAL,
-    # time-varying wind that is no longer true for pm10/pm25/no2 -- see
-    # the tagged-tracer decomposition below, which explains why.
+    training_end = start_time + timedelta(seconds=training_steps * city.dt_seconds)
     print(
-        "\n[diagnostic control] station separation is 10,097 m, just past "
-        "localisation_radius_m=10000 -- a DIRECT OI correction at one "
-        "station cannot touch the other station's cell in the same step. "
-        "Compare below to the 'assimilated' results above."
+        f"\nTraining/validation split for all comparison tables below: training window "
+        f"{start_time.isoformat()} to {training_end.isoformat()} ({training_steps} steps), "
+        f"validation window {training_end.isoformat()} to {timestamps[-1].isoformat()}. "
+        f"The diurnal-climatology baseline is fit ONLY on the training window and scored "
+        f"ONLY on the validation window; CTM-assimilated and CTM-control are restricted to "
+        f"scoring on the same validation-window records for a fair, matched comparison."
+    )
+
+    results = {}
+
+    # === Spatial holdout: original pair, just OUTSIDE localisation_radius_m ===
+    results["spatial_6983_to_6984"] = comparison_table(
+        "SPATIAL HOLDOUT (outside radius, 10,097m): assimilate 6983 (Hombegowda Nagar) "
+        "-> validate held-out 6984 (Hebbal)  [before/after ref: last round found no2 "
+        "correlation 0.564 assim vs -0.045 control under this same pair with real wind, "
+        "no cluster stations]",
+        city, start_time, n_steps, records,
+        assimilated_ids={"6983"}, held_out_ids={"6984"},
+        met_stations=met_stations, hour_utc0=hour_utc0, training_end=training_end,
+    )
+    results["spatial_6984_to_6983"] = comparison_table(
+        "SPATIAL HOLDOUT (outside radius, 10,097m): assimilate 6984 (Hebbal) "
+        "-> validate held-out 6983 (Hombegowda Nagar)",
+        city, start_time, n_steps, records,
+        assimilated_ids={"6984"}, held_out_ids={"6983"},
+        met_stations=met_stations, hour_utc0=hour_utc0, training_end=training_end,
+    )
+
+    # === Spatial holdout: new close pair, well INSIDE localisation_radius_m ===
+    results["spatial_6973_to_5548"] = comparison_table(
+        "SPATIAL HOLDOUT (INSIDE radius, 1,381m -- new this round): assimilate 6973 "
+        "(Jayanagar 5th Block) -> validate held-out 5548 (BTM Layout)",
+        city, start_time, n_steps, records,
+        assimilated_ids={"6973"}, held_out_ids={"5548"},
+        met_stations=met_stations, hour_utc0=hour_utc0, training_end=training_end,
+    )
+    results["spatial_5548_to_6973"] = comparison_table(
+        "SPATIAL HOLDOUT (INSIDE radius, 1,381m -- new this round): assimilate 5548 "
+        "(BTM Layout) -> validate held-out 6973 (Jayanagar 5th Block)",
+        city, start_time, n_steps, records,
+        assimilated_ids={"5548"}, held_out_ids={"6973"},
+        met_stations=met_stations, hour_utc0=hour_utc0, training_end=training_end,
+    )
+
+    # === Diagnostic control: NO assimilation at all, both original stations ===
+    print(
+        "\n[diagnostic control, both original stations at once] station separation is "
+        "10,097 m, just past localisation_radius_m=10000 -- a DIRECT OI correction at one "
+        "station cannot touch the other station's cell in the same step."
     )
     metrics_no_assim_control = run_hindcast(
         city, start_time, n_steps, records,
         assimilated_station_ids=set(), held_out_station_ids={"6983", "6984"},
         met_stations=met_stations, hour_utc0=hour_utc0,
     )
-    _print_metrics("NO assimilation control (pure background + schematic emissions) -> both real stations", metrics_no_assim_control)
+    _print_metrics("NO assimilation control (pure background + schematic emissions) -> both original stations", metrics_no_assim_control)
 
     # === Tagged-tracer diagnostic: WHERE does the held-out station's ===
-    # no2 field actually come from, mechanistically? Not just "does
-    # correlation improve" but "why". Reuses the exact same diagnostic
-    # tool used to investigate the SO2 failure and the constant-
-    # climatology run's diurnal-coincidence finding.
-    print("\n" + "=" * 70)
+    # no2 field actually come from, mechanistically?
+    print("\n" + "=" * 78)
     print("TAGGED-TRACER DIAGNOSTIC: no2 field composition at held-out Hebbal (6984)")
-    print("=" * 70)
+    print("=" * 78)
     sim_diag = Simulator(city, enable_tagged_tracers=True, hour_utc0=hour_utc0)
     by_step_diag: dict[int, list[Observation]] = {}
     for r in records:
@@ -167,25 +326,38 @@ def main() -> None:
         "  -> assimilation only ever touches the LIVE field, never tag fields, and never touches Hebbal's\n"
         "     cell directly (outside localisation_radius_m). So a NONZERO 'unexplained' fraction here can only\n"
         "     be assimilation-corrected mass that reached Hebbal through REAL PHYSICAL TRANSPORT (advection/\n"
-        "     diffusion under the real, time-varying wind) over the multi-day window -- a mechanism that did\n"
-        "     not exist under the old constant-climatology run (where wind never varies, so whatever direction\n"
-        "     it's fixed to is the only direction assimilated mass can ever travel)."
+        "     diffusion under the real, time-varying wind) over the multi-day window."
     )
 
     # === Temporal holdout: first 4 days train, last ~3 days forecast ===
-    print("\n" + "=" * 70)
-    print("TEMPORAL HOLDOUT")
-    print("=" * 70)
-    training_end = start_time + timedelta(seconds=training_steps * city.dt_seconds)
-    print(f"Training window: {start_time.isoformat()} to {training_end.isoformat()} ({training_steps} steps)")
-    print(f"Forecast window: {training_end.isoformat()} to {timestamps[-1].isoformat()} ({n_steps - training_steps} steps)")
-
+    # run_hindcast_temporal_holdout() assimilates {"6983","6984"} only for
+    # t < training_steps, then stops and scores the SAME two stations for
+    # t >= training_steps -- a schedule run_hindcast() cannot express (it
+    # treats a station as either always-assimilated or never-assimilated
+    # for the whole run), so this is computed directly and handed to
+    # comparison_table() as precomputed_assim rather than re-derived from
+    # disjoint assimilated_ids/held_out_ids sets.
     metrics_temporal = run_hindcast_temporal_holdout(
         city, start_time, n_steps, records,
         station_ids={"6983", "6984"}, training_steps=training_steps,
         met_stations=met_stations, hour_utc0=hour_utc0,
     )
-    _print_metrics("assimilate both stations through training window, forecast freely, validate on forecast window", metrics_temporal)
+    results["temporal"] = comparison_table(
+        "TEMPORAL HOLDOUT: assimilate both original stations through the training window, "
+        "forecast freely (no further nudging), validate on the forecast window",
+        city, start_time, n_steps, records,
+        held_out_ids={"6983", "6984"},
+        met_stations=met_stations, hour_utc0=hour_utc0, training_end=training_end,
+        precomputed_assim=metrics_temporal,
+    )
+
+    print("\n" + "=" * 78)
+    print("SUMMARY")
+    print("=" * 78)
+    print(
+        "See per-experiment 'verdict' lines above for whether CTM-assimilated beats both "
+        "trivial baselines, one, or neither, per species."
+    )
 
 
 if __name__ == "__main__":
