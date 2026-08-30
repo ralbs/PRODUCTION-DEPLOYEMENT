@@ -3,7 +3,7 @@ const rateLimit = require("express-rate-limit");
 const Telemetry = require("../models/Telemetry");
 const { authenticateDevice } = require("../middleware/auth");
 const { calculateAQI } = require("../lib/aqi");
-const { preparePollutants, prepareDisplayPollutants, normalizeGasUnits } = require("../lib/prepare");
+const { preparePollutants, prepareDisplayPollutants } = require("../lib/prepare");
 const { forwardToThingSpeak } = require("../lib/thingspeak");
 
 const router = express.Router();
@@ -93,10 +93,10 @@ router.post("/", ingestLimiter, authenticateDevice, async (req, res) => {
 
     // Fire-and-forget live republish — ingestion succeeds even if either sink is down.
     req.app.get("mqttPublish")?.(body.station_id, body);
-    // Thingspeak + the live AQI both expect µg/m³ (see units contract), but the
-    // board ships ppm — normalize on the way out so sinks never see raw ppm.
-    const normalized = normalizeGasUnits(pollutants);
-    forwardToThingSpeak(normalized, body.weather, calculateAQI(normalized)?.aqi);
+    // Pollutants are stored/shipped in µg/m³ (or unitless proxy / Ω) exactly as
+    // the firmware sent them — no unit conversion at ingest. forward + AQI use
+    // the stored values directly.
+    forwardToThingSpeak(pollutants, body.weather, calculateAQI(pollutants)?.aqi);
 
     res.status(201).json({ status: "success", id: doc._id, alert });
   } catch (err) {

@@ -74,16 +74,18 @@ flowchart LR
 | PM1 / PM2.5 / PM10 | PMS5003 | ✅ trusted | genuine laser particle counts, verified live |
 | temperature / humidity / pressure | BME680 | ✅ trusted | verified live |
 | wifi_rssi | ESP32 | ✅ trusted | verified live |
-| CO (`mq7_co`) | MQ-7 | 🔧 calibratable | the only gas channel with real signal range (ratio 0.68–1.28) **and** a KSPCB reference. Calibrated server-side by `scripts/fit-co.js`; trusted only once it appears in `TRUSTED_GAS_CHANNELS` |
+| CO (`mq7_co`) | MQ-7 | 🔧 calibratable | the only gas channel with real signal range (ratio 0.68–1.28) **and** a KSPCB reference. Calibrated server-side by `scripts/fit-co.js`; once a fit is saved, the calibrated value feeds the CO sub-index automatically |
 | NO₂ | MICS-6814 OX | ❌ never | raw ratio is stuck in a ±10 % noise band around 1.0 — signal-to-noise too poor to fit. Stays nulled permanently |
 | NH₃ | MICS-6814 RED | ❌ never | same problem as NO₂ (ratio ≈ 1.00 ± 0.02) |
 | O₃ | MQ-131 | ⚠️ enabled, module suspect | re-enabled by request (`ENABLE_GAS_O3 1`) — but the module's output is pinned near ground (0.021 V, no response), so the guards report only `0` (below detection) or `-1` (frozen) until the hardware is fixed |
 | CO (`co`) | MICS-6814 RED | ❌ disabled | pin not connected on PCB — always `-1` |
 | H₂S / H₂ / MQ-135 | MQ-136 / MQ-8 / MQ-135 | ⚠️ trend-only | values move but there is **no reference** to fit against (KSPCB has SO₂, not H₂S; no H₂; MQ-135 is a generic AQ proxy) |
 
-**Trust model:** per-channel, via `TRUSTED_GAS_CHANNELS` env (comma-separated pollutant keys). With it empty (default) the AQI is PM-only (~35–40, Good). A channel only enters the AQI after (a) a saved calibration and (b) explicit opt-in.
+**Trust model (as of the current deployment):** every channel with a breakpoint table participates in the AQI after passing the sanity ceilings in `sanitizePollutants()` (`lib/aqi.js`). This includes the CPCB pollutants (PM2.5, PM10, NO₂, O₃, CO, NH₃) plus four operator-requested channels — **H₂S, H₂, MQ-135, VOC** — that have **invented, non-standard breakpoint tables** tuned to each channel's firmware output scale. The invented channels are informational: they keep routine/noisy baselines near Good–Satisfactory but can push the index on a genuine spike. Because the firmware ships already-converted µg/m³, gases are stored and read as-is with **no backend unit conversion** (a former ppm re-conversion was the cause of the absurd AQI).
 
-**Verdict:** of the seven gas channels, exactly one — MQ-7 CO — is worth calibrating. The rest are excluded for hardware or signal-to-noise reasons, not laziness.
+**Dominant pollutant:** the channel with the highest sub-index. Because all channels now participate (and CO ÷1000 → mg/m³ for its CPCB breakpoints), the dominant pollutant changes dynamically with the readings instead of always being PM2.5.
+
+**Verdict:** of the seven gas channels, MQ-7 CO is the only one with a calibration path (`scripts/fit-co.js`). The rest use the invented tables and are labeled as non-CPCB in the code.
 
 ---
 
@@ -122,13 +124,13 @@ The payload also carries a **`diagnostics`** block — raw `ads1_voltages`/`ads2
 
 ### GET /api/telemetry/latest & /history
 - Query by `device_id` or `station_id` (dynamic field).
-- **Every read runs `preparePollutants()`** — `applyCalibration()` (overwrite firmware gas placeholders with any stored per-device calibration) then `sanitizePollutants()` (null disabled/faulted channels and every gas channel not in `TRUSTED_GAS_CHANNELS`) — then `calculateAQI()`. The same pipeline feeds the AQI routes and the GraphQL resolvers, so the dashboard and AQI always agree.
+- **Every read runs `preparePollutants()`** — `applyCalibration()` (overwrite firmware gas placeholders with any stored per-device calibration) then `sanitizePollutants()` (null disabled/faulted or out-of-range channels via the sanity ceilings) — then `calculateAQI()`. The same pipeline feeds the AQI routes and the GraphQL resolvers, so the dashboard and AQI always agree. No unit conversion runs here: gases are already µg/m³ in storage.
 
 ### GET /api/telemetry/raw
 - Calibration-only: returns pollutants **unsanitized** plus the `diagnostics` block. Never used by the dashboard.
 
 ### Sanity caps (`lib/aqi.js`)
-- Each channel is capped (e.g. `pm2_5: 1000`, `mq7_co: 100000`); out-of-range → null. AQI is clamped to 0–500.
+- Each channel is capped (e.g. `pm2_5: 1000`, `mq7_co: 100000`, `h2s: 10000`); out-of-range → null. AQI is clamped to 0–500.
 
 ---
 
@@ -138,12 +140,14 @@ The payload also carries a **`diagnostics`** block — raw `ads1_voltages`/`ads2
 
 ```
 sub-index(p) = ((I_hi − I_lo) / (BP_hi − BP_lo)) × (p − BP_lo) + I_lo
-AQI          = max(sub-index(pm2_5, pm10, no2, o3, co_from_mq7_co, nh3?))
+AQI          = max(sub-index of every channel with a breakpoint table)
+             = max(cm2_5, pm10, no2, o3, co_from_mq7_co, nh3,
+                    h2s, h2, mq135, voc_gas_ohm)
 category     0–50 Good · 51–100 Satisfactory · 101–200 Moderate
              201–300 Poor · 301–400 Very Poor · 401–500 Severe
 ```
 
-With an empty `TRUSTED_GAS_CHANNELS`, the gas set is empty → AQI is max of the PM sub-indices only.
+Every channel with a breakpoint table participates (after the sanity ceilings). NH₃ uses the official CPCB table; **H₂S, H₂, MQ-135, VOC use invented non-CPCB breakpoints** (documented in `lib/aqi.js`), so they can become dominant on a genuine spike but routine baselines stay low. CO sub-index uses `mq7_co` and is divided by 1000 (µg/m³ → mg/m³) to match its CPCB breakpoints.
 
 ---
 
@@ -174,7 +178,7 @@ Acceptance bar (all required, else nothing is saved):
 A passing fit writes a `Calibration` doc (`calibrations` collection): `model {a,b}`, `validRatioMin/Max`, `metrics {r2, mae, n}`. Every read path (`lib/prepare.js` → `lib/gasCal.js`) then replaces the firmware's `mq7_co` with the fitted value, and nulls it whenever the ratio falls outside the fitted window.
 
 ### Enable
-Set `TRUSTED_GAS_CHANNELS=mq7_co` in the backend env **only after** a fit has been saved and the resulting room-air readings look plausible. All other gas channels are never trusted.
+Once a fit has been saved and the room-air `mq7_co` looks plausible, CO (via `mq7_co`) participates in the AQI automatically through its breakpoint table — it no longer needs to be added to an opt-in list. The calibrated value replaces the firmware placeholder on every read via `lib/gasCal.js`.
 
 ### Future upgrade (gold standard)
 A **span-gas bump test** (certified CO can, e.g. 50 ppm) would give a true two-point calibration: a serial `CALCO <ppm>` command that samples the sensor under the can and solves the curve directly. This is standard practice for CO monitors and would make the fitted curve rigorous instead of statistical. The `Calibration` model already supports storing it — only the firmware `CALCO` command and the physical can are missing.

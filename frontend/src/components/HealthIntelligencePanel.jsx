@@ -247,7 +247,7 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
             { label: "O₃",    value: p.o3 != null ? +(+p.o3).toFixed(1) : null,      unit: "µg/m³", who: 60, color: "#22c55e" },
             { label: "NH₃",   value: p.nh3 != null ? +(+p.nh3).toFixed(1) : null,  unit: "µg/m³", who: null, color: "#a3e635" },
             { label: "H₂S",   value: p.h2s != null ? +(+p.h2s).toFixed(1) : null,  unit: "µg/m³", who: null, color: "#84cc16" },
-            { label: "MQ-135", value: p.mq135 != null ? +(+p.mq135).toFixed(1) : null, unit: "µg/m³", who: null, color: "#2dd4bf" },
+            { label: "MQ-135", value: p.mq135 != null ? +(+p.mq135).toFixed(2) : null, unit: "proxy", who: null, color: "#2dd4bf" },
             { label: "H₂",    value: p.h2 != null ? +(+p.h2).toFixed(1) : null,     unit: "µg/m³", who: null, color: "#38bdf8" },
             { label: "CO",    value: (p.mq7_co ?? p.co) != null ? +((p.mq7_co ?? p.co)).toFixed(1) : null, unit: "µg/m³", who: null, color: "#60a5fa" },
             { label: "VOC",   value: p.voc_gas_ohm != null ? +(p.voc_gas_ohm).toFixed(0) : null, unit: "Ω", who: null, color: "#f472b6" },

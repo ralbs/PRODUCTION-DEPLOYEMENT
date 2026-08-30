@@ -25,9 +25,9 @@ export const api = {
   estimatePlume: (body)              => post("/api/plume/estimate", { ...body, grid: true }),
 };
 
-// Unit helpers — the backend normalizes every read path to µg/m³ (the board
-// ships ppm, converted on read in lib/prepare.js), so gases arrive in µg/m³
-// (see backend/lib/aqi.js units contract). Only CO needs scaling: µg/m³ → mg/m³.
+// Unit helpers — the firmware already ships every gas channel in µg/m³ and the
+// backend stores/serves them as-is (no conversion). mq135 is a unitless proxy
+// and voc_gas_ohm is in Ω. Only CO is rescaled here: µg/m³ → mg/m³ for display.
 export const conv = {
   no2_ugm3: (v) => v == null ? null : +(+v).toFixed(1),
   o3_ugm3:  (v) => v == null ? null : +(+v).toFixed(1),

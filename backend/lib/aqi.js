@@ -2,14 +2,15 @@
  * India CPCB National AQI — subindex calculation.
  *
  * Breakpoints below are the published CPCB AQI breakpoint table for the
- * pollutants this board actually measures (PM2.5, PM10, NO2, O3, CO).
- * CPCB also defines SO2, NH3, and Pb breakpoints, but this board has no
- * sensors for those, so they're intentionally left out rather than faked.
+ * pollutants this board actually measures (PM2.5, PM10, NO2, O3, CO, NH3).
+ * CPCB also defines SO2 and Pb breakpoints, but this board has no sensors for
+ * those, so they're intentionally left out rather than faked.
  *
  * Units contract (per the telemetry API spec):
  *   - PM1 / PM2.5 / PM10           : µg/m³
- *   - NO2, O3, NH3, H2S, H2, mq135 : µg/m³
- *   - mq7_co (CO)                  : µg/m³   (CPCB breakpoints use mg/m³ — see conversion below)
+ *   - NO2, O3, NH3, H2S, H2        : µg/m³
+ *   - mq7_co (CO) / co             : µg/m³   (CPCB breakpoints use mg/m³ — see conversion below)
+ *   - mq135                        : UNITLESS air-quality proxy (no single species)
  *   - voc_gas_ohm                  : Ω (BME680 raw gas resistance, informational)
  *   - `-1` / `null` / `NaN`        : sensor fault or disabled sensor → treated as missing
  *
@@ -20,8 +21,14 @@
  *
  * CPCB AQI is bounded 0..500. Concentrations beyond the top band are capped
  * at 500 rather than extrapolated, and readings that are physically
- * impossible (a broken/uncalibrated sensor) are rejected entirely so one bad
- * channel can't poison the whole index.
+ * impossible (a broken/uncalibrated sensor) are rejected by the sanity
+ * ceilings so one bad channel can't poison the whole index.
+ *
+ * NOTE ON H2S / H2 / MQ135 / VOC: these four have NO official CPCB AQI
+ * breakpoints. They are included in the index with INVENTED, non-standard
+ * thresholds (band ranges tuned to each channel's typical sensor scale) per
+ * operator request. Treat them as informational — they are NOT a standard
+ * CPCB AQI contribution.
  */
 
 const BREAKPOINTS = {
@@ -65,15 +72,61 @@ const BREAKPOINTS = {
     [17.1, 34, 301, 400],
     [34.1, 50, 401, 500],
   ],
+  nh3: [ // µg/m3, 24-hr avg — official CPCB
+    [0, 200, 0, 50],
+    [201, 400, 51, 100],
+    [401, 800, 101, 200],
+    [801, 1200, 201, 300],
+    [1201, 1800, 301, 400],
+    [1801, 5000, 401, 500],
+  ],
+  /* ---- INVENTED / NON-CPCB breakpoints (operator-requested) ---- */
+  /*
+   * Bands are tuned to each channel's observed firmware output scale so that
+   * routine (noisy, uncalibrated) baseline readings land in Good/Satisfactory
+   * and only genuinely elevated readings push the index higher. They do NOT
+   * reflect any regulatory standard — informational only.
+   */
+  h2s: [ // µg/m3 (no CPCB AQI table — informational only)
+    [0, 300, 0, 50],
+    [301, 600, 51, 100],
+    [601, 1200, 101, 200],
+    [1201, 2500, 201, 300],
+    [2501, 5000, 301, 400],
+    [5001, 10000, 401, 500],
+  ],
+  h2: [ // µg/m3 (no CPCB AQI table — informational only)
+    [0, 200, 0, 50],
+    [201, 500, 51, 100],
+    [501, 1500, 101, 200],
+    [1501, 3000, 201, 300],
+    [3001, 8000, 301, 400],
+    [8001, 20000, 401, 500],
+  ],
+  mq135: [ // unitless proxy (no CPCB AQI table — informational only)
+    [0, 1.0, 0, 50],
+    [1.1, 2.0, 51, 100],
+    [2.1, 3.0, 101, 200],
+    [3.1, 4.0, 201, 300],
+    [4.1, 5.0, 301, 400],
+    [5.1, 10, 401, 500],
+  ],
+  voc_gas_ohm: [ // Ω (no CPCB AQI table — informational only)
+    [0, 25000, 0, 50],
+    [25001, 35000, 51, 100],
+    [35001, 45000, 101, 200],
+    [45001, 60000, 201, 300],
+    [60001, 80000, 301, 400],
+    [80001, 100000, 401, 500],
+  ],
 };
 
 /*
- * Physically-plausible ceilings per pollutant (µg/m³ for gases, mg/m³ for
- * co, µg/m³ for PM). Anything above these is a broken/uncalibrated sensor,
- * not a real reading — a single bad channel must not hijack the AQI.
- * CO: MQ-7 can legitimately read high near combustion, so allow up to
- * 100 mg/m³ (CPCB "Severe" band tops out at 50 mg/m³; this still rejects
- * the ppm-scale garbage seen from uncalibrated firmware).
+ * Physically-plausible ceilings per channel. Gases/mq135/voc are all already
+ * in the firmware's stored scale (µg/m³ for gases; mq135 is a unitless proxy;
+ * voc_gas_ohm in Ω). Anything above these is a broken/uncalibrated sensor —
+ * a single bad channel must not hijack the AQI. Note: values here must not
+ * be lower than the top breakpoint band, or the top band would be unreachable.
  */
 const SANITY_MAX = {
   pm1:     2000,    // µg/m³
@@ -81,37 +134,22 @@ const SANITY_MAX = {
   pm10:    2000,    // µg/m³
   no2:     2000,    // µg/m³
   o3:      1000,    // µg/m³
-  nh3:     3000,    // µg/m³
-  h2s:     2000,    // µg/m³
-  h2:      5000,    // µg/m³
-  mq135:  10000,    // µg/m³ (generic air-quality proxy — generous)
+  nh3:     5000,    // µg/m³ (matches top NH3 breakpoint)
+  h2s:    10000,    // µg/m³ (matches top H2S breakpoint)
+  h2:     20000,    // µg/m³ (matches top H2 breakpoint)
+  mq135:     10,    // unitless proxy (matches top MQ135 breakpoint)
   co:     100000,   // µg/m³ (~100 mg/m³ CO; MiCS CO channel is -1/disabled)
   mq7_co: 100000,   // µg/m³ (~100 mg/m³ CO)
+  voc_gas_ohm: 100000, // Ω (matches top VOC breakpoint)
 };
-
-/*
- * Gas channels are only trusted after the firmware's estimatePPM() model is
- * properly calibrated. Instead of a single global on/off switch, trust is
- * granted PER CHANNEL via the TRUSTED_GAS_CHANNELS env var (comma-separated).
- * This lets a genuinely calibrated channel (e.g. MQ-7 CO after a KSPCB fit)
- * enter the AQI while the un-calibratable channels stay permanently nulled:
- * NO₂ / NH₃ have their signal buried in ±10% noise, O₃ is a hardware fault,
- * and H₂S / H₂ / MQ-135 have no reference to fit against.
- * Example: TRUSTED_GAS_CHANNELS=mq7_co
- */
-const GAS_POLLUTANTS = ["no2", "o3", "nh3", "h2s", "h2", "mq135", "co", "mq7_co"];
-const TRUSTED_GAS_CHANNELS = new Set(
-  (process.env.TRUSTED_GAS_CHANNELS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
 
 /**
  * Return a copy of `pollutants` with invalid readings replaced by null:
  *   - null / undefined / NaN
  *   - ≤ 0  (firmware uses -1 as a "sensor fault / disabled" sentinel)
  *   - above the physically-plausible ceiling (broken/uncalibrated channel)
+ * Every channel with a BREAKPOINTS entry is eligible for the AQI; the sanity
+ * ceilings (not a trust whitelist) are what keep broken readings out.
  * Unknown keys are left untouched. Raw stored data is never mutated.
  */
 function sanitizePollutants(pollutants) {
@@ -119,21 +157,15 @@ function sanitizePollutants(pollutants) {
   const clean = { ...pollutants };
 
   for (const key of Object.keys(clean)) {
-    if (GAS_POLLUTANTS.includes(key) && !TRUSTED_GAS_CHANNELS.has(key)) {
-      clean[key] = null;
-      continue;
-    }
-    const v = clean[key];
-    if (v == null || (typeof v === "number" && isNaN(v))) {
-      clean[key] = null;
-      continue;
-    }
-    const max = SANITY_MAX[key];
-    if (typeof v === "number" && max != null && (v <= 0 || v > max)) {
-      clean[key] = null;
-    }
+    clean[key] = sanitizeValue(clean[key], SANITY_MAX[key]);
   }
   return clean;
+}
+
+function sanitizeValue(v, max) {
+  if (v == null || (typeof v === "number" && isNaN(v))) return null;
+  if (typeof v === "number" && max != null && (v <= 0 || v > max)) return null;
+  return v;
 }
 
 function subIndex(pollutant, concentration) {
@@ -163,7 +195,8 @@ function aqiCategory(aqi) {
 
 /**
  * @param pollutants - the `pollutants` object from a telemetry document.
- *   All gas channels are already in µg/m³ (see units contract at top).
+ *   All gas channels are already stored in µg/m³ (see units contract at top);
+ *   mq135 is a unitless proxy and voc_gas_ohm is in Ω.
  */
 function calculateAQI(pollutants) {
   if (!pollutants) return null;
@@ -175,9 +208,14 @@ function calculateAQI(pollutants) {
   const concentrations = {
     pm2_5: clean.pm2_5,
     pm10:  clean.pm10,
-    no2:   clean.no2,   // already µg/m³
-    o3:    clean.o3,    // already µg/m³
+    no2:   clean.no2,   // µg/m³
+    o3:    clean.o3,    // µg/m³
     co:    coSource != null ? coSource / 1000 : null, // µg/m³ -> mg/m³
+    nh3:   clean.nh3,   // µg/m³
+    h2s:   clean.h2s,   // µg/m³ (invented breakpoints)
+    h2:    clean.h2,    // µg/m³ (invented breakpoints)
+    mq135: clean.mq135, // unitless proxy (invented breakpoints)
+    voc_gas_ohm: clean.voc_gas_ohm, // Ω (invented breakpoints)
   };
 
   const subIndices = {};
