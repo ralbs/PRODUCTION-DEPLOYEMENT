@@ -1,0 +1,351 @@
+{
+  "city_name": "Bangalore",
+  "domain": {
+    "lat_sw": 12.834,
+    "lon_sw": 77.47,
+    "nx": 54,
+    "ny": 54,
+    "dx": 500.0,
+    "dy": 500.0
+  },
+  "utc_offset_hours": 5.5,
+  "dt_seconds": 60,
+  "wind_history_hours": 24,
+  "species": {
+    "pm25": {
+      "unit": "ug_m3",
+      "v_dep_m_s": 0.0005,
+      "background_conc": 15.0,
+      "clim_max": 500
+    },
+    "pm10": {
+      "unit": "ug_m3",
+      "v_dep_m_s": 0.005,
+      "background_conc": 35.0,
+      "clim_max": 1000
+    },
+    "co": {
+      "unit": "mg_m3",
+      "v_dep_m_s": 1e-06,
+      "background_conc": 1.0,
+      "clim_max": 30,
+      "notes": "CO in mg/m3 to match MQ-7/MH-Z19 sensor convention; every other species is ug/m3 -- convert explicitly at any boundary that compares species."
+    },
+    "no2": {
+      "unit": "ug_m3",
+      "v_dep_m_s": 0.002,
+      "background_conc": 10.0,
+      "clim_max": 300
+    },
+    "so2": {
+      "unit": "ug_m3",
+      "v_dep_m_s": 0.008,
+      "background_conc": 5.0,
+      "clim_max": 200
+    },
+    "bc": {
+      "unit": "ug_m3",
+      "v_dep_m_s": 0.0006,
+      "background_conc": 2.0,
+      "clim_max": 50
+    }
+  },
+  "diurnal_profiles": {
+    "24h": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "morning_evening": [
+      0.2,
+      0.15,
+      0.1,
+      0.1,
+      0.15,
+      0.3,
+      0.7,
+      1.2,
+      1.5,
+      1.3,
+      1.0,
+      0.9,
+      0.85,
+      0.8,
+      0.8,
+      0.85,
+      1.1,
+      1.4,
+      1.5,
+      1.3,
+      1.0,
+      0.7,
+      0.5,
+      0.3
+    ],
+    "daytime": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0.1,
+      0.5,
+      1.0,
+      1.2,
+      1.2,
+      1.2,
+      1.1,
+      1.1,
+      1.1,
+      1.2,
+      1.2,
+      1.0,
+      0.8,
+      0.4,
+      0.1,
+      0,
+      0,
+      0,
+      0
+    ],
+    "night": [
+      1.5,
+      1.8,
+      1.8,
+      1.5,
+      1.2,
+      0.8,
+      0.4,
+      0.2,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.2,
+      0.3,
+      0.5,
+      0.8,
+      1.0,
+      1.2,
+      1.4,
+      1.5,
+      1.5
+    ]
+  },
+  "emission_sources": [
+    {
+      "name": "Outer Ring Road NE",
+      "kind": "area",
+      "profile": "morning_evening",
+      "lat_sw": 12.97,
+      "lon_sw": 77.64,
+      "lat_ne": 13.01,
+      "lon_ne": 77.68,
+      "rates": {
+        "pm25": 0.08,
+        "pm10": 0.15,
+        "co": 2.5,
+        "no2": 0.1,
+        "bc": 0.02
+      }
+    },
+    {
+      "name": "Hosur Road Corridor",
+      "kind": "area",
+      "profile": "morning_evening",
+      "lat_sw": 12.88,
+      "lon_sw": 77.6,
+      "lat_ne": 12.94,
+      "lon_ne": 77.64,
+      "rates": {
+        "pm25": 0.07,
+        "pm10": 0.12,
+        "co": 0.051,
+        "no2": 0.09,
+        "bc": 0.018
+      }
+    },
+    {
+      "name": "Peenya Industrial Area",
+      "kind": "area",
+      "profile": "daytime",
+      "lat_sw": 13.02,
+      "lon_sw": 77.51,
+      "lat_ne": 13.06,
+      "lon_ne": 77.55,
+      "rates": {
+        "pm25": 0.12,
+        "so2": 0.25,
+        "pm10": 0.2,
+        "bc": 0.04,
+        "co": 1.0
+      }
+    },
+    {
+      "name": "Whitefield IT+Industry",
+      "kind": "area",
+      "profile": "daytime",
+      "lat_sw": 12.96,
+      "lon_sw": 77.74,
+      "lat_ne": 13.01,
+      "lon_ne": 77.79,
+      "rates": {
+        "pm25": 0.06,
+        "so2": 0.1,
+        "no2": 0.08,
+        "co": 0.8
+      }
+    },
+    {
+      "name": "North Bangalore Residential",
+      "kind": "area",
+      "profile": "night",
+      "lat_sw": 13.03,
+      "lon_sw": 77.55,
+      "lat_ne": 13.07,
+      "lon_ne": 77.61,
+      "rates": {
+        "pm25": 0.05,
+        "co": 1.5,
+        "bc": 0.03
+      }
+    }
+  ],
+  "sensors": [
+    {
+      "id": "6983",
+      "lat": 12.938539,
+      "lon": 77.5901,
+      "type": "CPCB/KSPCB-CAAQMS",
+      "_name": "Hombegowda Nagar, Bengaluru - KSPCB",
+      "_source": "OpenAQ public archive (s3://openaq-data-archive), real station, reporting since 2018-08",
+      "species_error_sigma": {
+        "pm25": 5.0,
+        "pm10": 8.0,
+        "co": 0.15,
+        "no2": 4.0,
+        "so2": 2.0
+      }
+    },
+    {
+      "id": "6984",
+      "lat": 13.029152,
+      "lon": 77.585901,
+      "type": "CPCB/KSPCB-CAAQMS",
+      "_name": "Hebbal, Bengaluru - KSPCB",
+      "_source": "OpenAQ public archive (s3://openaq-data-archive), real station, reporting since 2018-08",
+      "species_error_sigma": {
+        "pm25": 5.0,
+        "pm10": 8.0,
+        "co": 0.15,
+        "no2": 4.0,
+        "so2": 2.0
+      }
+    },
+    {
+      "id": "6973",
+      "lat": 12.920984,
+      "lon": 77.584908,
+      "type": "CPCB/KSPCB-CAAQMS",
+      "_name": "Jayanagar 5th Block, Bengaluru - KSPCB",
+      "_source": "OpenAQ public archive (s3://openaq-data-archive), real station; ID found via GitHub code search (tannnmayy/et-ai station audit), archive coverage verified 2018-08 to 2020-04",
+      "species_error_sigma": {
+        "pm25": 5.0,
+        "pm10": 8.0,
+        "co": 0.15,
+        "no2": 4.0,
+        "so2": 2.0
+      }
+    },
+    {
+      "id": "5548",
+      "lat": 12.9135218,
+      "lon": 77.5950804,
+      "type": "CPCB-CAAQMS",
+      "_name": "BTM Layout, Bengaluru - CPCB",
+      "_source": "OpenAQ public archive (s3://openaq-data-archive), real station; ID found via GitHub code search (tannnmayy/et-ai station audit), archive coverage verified 2018-03 to 2020-03 (2019-07-10 specifically missing -- a real gap, confirmed via S3 NoSuchKey, not fabricated)",
+      "species_error_sigma": {
+        "pm25": 5.0,
+        "pm10": 8.0,
+        "co": 0.15,
+        "no2": 4.0,
+        "so2": 2.0
+      }
+    },
+    {
+      "id": "6975",
+      "lat": 12.917348,
+      "lon": 77.622813,
+      "type": "CPCB/KSPCB-CAAQMS",
+      "_name": "Silk Board, Bengaluru - KSPCB",
+      "_source": "OpenAQ public archive (s3://openaq-data-archive), real station; ID found via GitHub code search (tannnmayy/et-ai station audit), archive coverage verified 2018-08 to 2020-03",
+      "species_error_sigma": {
+        "pm25": 5.0,
+        "pm10": 8.0,
+        "co": 0.15,
+        "no2": 4.0,
+        "so2": 2.0
+      }
+    }
+  ],
+  "_sensors_note": "species_error_sigma values above are engineering-judgment placeholders (CPCB doesn't publish per-instrument calibration uncertainty in its open data), NOT vendor-certified numbers -- reasonable orders of magnitude for reference-grade CAAQM analyzers, not a validated instrument spec.",
+  "_coordinate_verification": "The earlier verification pass only checked bangalore.json against the GitHub repo (tannnmayy/et-ai) and the OpenAQ S3 archive files -- internal consistency between two things ultimately sourced from the same place, not independent confirmation. Fixed 2026-08-25: fetched https://explore.openaq.org/locations/{id} RAW HTML (not just its rendered text) for all 5 stations and found each page embeds a React Server Components data payload of the form 'coordinates:$R[N]={latitude:...,longitude:...}' tied directly to that location's own name field -- OpenAQ's own live platform database, independent of the GitHub repo and the archive CSVs. All 5 matched bangalore.json's committed coordinates EXACTLY (byte-for-byte on the decimal digits): 6983=(12.938539,77.5901) Hombegowda Nagar, 6984=(13.029152,77.585901) Hebbal, 6973=(12.920984,77.584908) Jayanagar 5th Block, 5548=(12.9135218,77.5950804) BTM Layout, 6975=(12.917348,77.622813) Silk Board. Additionally cross-checked 5548 (least corroborated: different ID range/network tag, has the real data gap and the CO unit bug) against an independent place-name source -- Wikipedia lists BTM Layout's locality centroid at 12.9250 N, 77.6086 E; the claimed station coordinates are ~1.95km from that centroid (flat-earth approx, same convention as ctm/grid.py), well within BTM Layout's actual extent (a multi-km-wide locality bordering Adugodi/Madiwala) and nowhere near an unrelated part of the city. Both methods confirm, neither contradicts.",
+  "_sensor_pair_distances_m": {
+    "_why_this_matters": "ctm/assimilation.py's localisation_radius_m=10000 below is a HARD cutoff -- a pair separated beyond it gets ZERO direct assimilation correction at the other station regardless of whether the assimilation logic is correct (this is exactly what made the original 6983<->6984 spatial holdout structurally unable to show an effect: they're 10097m apart, just past the cutoff). All distances computed on the same flat-earth approximation ctm/grid.py's CTMGrid uses (111320 m/deg latitude, 111320*cos(lat) m/deg longitude).",
+    "6983_Hombegowda<->6984_Hebbal": 10097,
+    "6983_Hombegowda<->6973_Jayanagar5th": 2034,
+    "6983_Hombegowda<->5548_BTMLayout": 2837,
+    "6983_Hombegowda<->6975_SilkBoard": 4262,
+    "6984_Hebbal<->6973_Jayanagar5th": 12042,
+    "6984_Hebbal<->5548_BTMLayout": 12910,
+    "6984_Hebbal<->6975_SilkBoard": 13074,
+    "6973_Jayanagar5th<->5548_BTMLayout": 1381,
+    "6973_Jayanagar5th<->6975_SilkBoard": 4133,
+    "5548_BTMLayout<->6975_SilkBoard": 3039,
+    "_cluster_summary": "6983/6973/5548/6975 form a tight cluster, EVERY pair among them well under localisation_radius_m=10000 (max 4262m) -- a genuine spatial holdout is now possible within this cluster. 6984 remains isolated from all of them (>10000m to every other station) -- keep it as a held-out/contrast station, not part of an assimilation pair."
+  },
+  "assimilation": {
+    "bg_error_fraction": 0.3,
+    "correlation_length_m": 5000,
+    "localisation_radius_m": 10000
+  },
+  "_phase16_calibration": {
+    "method": "Phase 16 -- calibrated on the disjoint 2019-07-17..2019-07-23 training sub-window (first 4 days), validated on that week's remaining ~3 days, never on the Phase 15 window. Full findings, including the two REJECTED changes below, are in PHASE16_CALIBRATION_REPORT.md -- read that before touching these numbers again.",
+    "pm10_background_conc": "NOT CHANGED. Trial value 48.304 (training-window mean) REJECTED and reverted to the original 35.0 -- real training-window pm10 (mean 49.1) was ~34% higher than real validation-window pm10 (mean 32.2), a genuine within-week drift (monsoon rain washout, not noise); the trial value overfit the wetter training days and made validation RMSE worse (22.6->23.7) and bias flip from -3.2 to +7.7 (over-prediction). See PHASE16_CALIBRATION_REPORT.md.",
+    "pm25_background_conc": "NOT CHANGED. Same rejection as pm10_background_conc -- trial value 19.124 REJECTED (real training mean 19.5 vs real validation mean 12.6, same drift); validation RMSE worsened 9.5->11.1, bias worsened +2.2->+6.3. See PHASE16_CALIBRATION_REPORT.md.",
+    "hosur_road_corridor_co_rate": {
+      "old": 2.0,
+      "new": 0.051,
+      "status": "APPLIED -- generalizes across both weeks (see below), unlike the background_conc trials.",
+      "method": "forward with/without-Hosur differencing at Silk Board (6975) ONLY, fit on the 2019-07-17..23 training sub-window",
+      "cross_week_check": "Applied AS-IS (no re-fit) to the ORIGINAL Phase 15 week (2019-07-09..16, never used in fitting this rate): rmse 33.25->0.69, bias +19.13->+0.28, MFB +151.8%->+24.3% -- holds on both weeks, not week-specific."
+    },
+    "so2": "EXCLUDED this round -- negative-or-near-zero shape correlation in all 7 checked Phase 15 rows",
+    "no2": "DEFERRED -- documented photochemistry-timing limitation, not a magnitude problem",
+    "co_scope": "Hosur Road Corridor rate only, fit against Silk Board (6975) only -- NOT extrapolated to any other source or station"
+  }
+}

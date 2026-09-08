@@ -1,0 +1,403 @@
+"""Tests for attribution/inverse.py, per CLAUDE.md's "Adjoint inverse
+layer" item 3 (true inverse source estimation) acceptance criteria:
+exact linear unit-response construction, statistically calibrated
+recovery, the single-snapshot identifiability trap and its multi-time
+fix, species advisory reuse of the forward model's own deposition
+numbers, and backward-footprint zone pre-screening."""
+import numpy as np
+import pytest
+
+from attribution.inverse import InversionObservation, SourceInversion, Zone
+from cities.loader import CityConfig, Domain, EmissionSource, Sensor, SpeciesConfig
+from ctm.deposition import deposition_rate
+from ctm.simulator import Simulator
+from met.weather_station import StationObservation
+
+SPECIES = "pm25"
+
+
+def _make_city(nx=60, ny=30, dx=500.0, dy=500.0, background=10.0, sensors=None, v_dep=0.0002, **kwargs):
+    domain = Domain(lat_sw=12.0, lon_sw=77.0, nx=nx, ny=ny, dx=dx, dy=dy)
+    species = {SPECIES: SpeciesConfig(name=SPECIES, unit="ug_m3", v_dep_m_s=v_dep, background_conc=background)}
+    return CityConfig(
+        city_name="InvTest", domain=domain, utc_offset_hours=0.0, species=species,
+        diurnal_profiles={"flat": [1.0] * 24}, sensors=sensors or [], dt_seconds=60.0, **kwargs,
+    )
+
+
+def test_unit_response_is_exactly_isolated_from_nonzero_background():
+    """'zero ambient background' must hold even when the city's real
+    background_conc is large -- otherwise H would be contaminated by a
+    constant offset and C = H @ E would not be exact."""
+    city = _make_city(background=500.0)  # deliberately huge, unrelated background
+    zone = Zone(name="z1", kind="point", lat=12.015, lon=77.03)
+    inv = SourceInversion(city, SPECIES, [zone])
+
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(20)]
+    k_h_history = [10.0] * 20
+    mixing_height_history = [500.0] * 20
+
+    recorded = inv._run_unit_response(zone, wind_history, k_h_history, mixing_height_history, {19})
+    max_val = recorded[19].max()
+    print(f"\n[inverse isolation] max concentration in unit-response field (city background=500): {max_val:.6f}")
+    assert max_val < 1.0  # nowhere near the 500 background -- confirms isolation
+
+
+def test_c_equals_h_times_e_exact_linearity():
+    """Running two zones TOGETHER at known rates must equal the linear
+    combination of their two isolated unit responses -- the whole point of
+    the forward-unit-response approach (exact to float32, not
+    approximate, and never derived from backward dwell-time weights)."""
+    city = _make_city(background=0.0)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.02)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.035)
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 25
+    wind_history = [{"u": 2.5, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [15.0] * n_steps
+    mixing_height_history = [400.0] * n_steps
+    rate_a, rate_b = 3.0, 1.7
+
+    response_a = inv._run_unit_response(zone_a, wind_history, k_h_history, mixing_height_history, {n_steps - 1})[n_steps - 1]
+    response_b = inv._run_unit_response(zone_b, wind_history, k_h_history, mixing_height_history, {n_steps - 1})[n_steps - 1]
+    predicted = rate_a * response_a + rate_b * response_b
+
+    # now run BOTH sources together in one real forward simulation
+    from ctm.advection import advect
+    from ctm.deposition import deposit
+    from ctm.diffusion import diffuse
+    from ctm.emissions import EmissionEngine
+    from ctm.grid import CTMGrid
+
+    combined_sources = [
+        EmissionSource(name="A", kind="point", profile="flat", rates={SPECIES: rate_a}, lat=12.015, lon=77.02),
+        EmissionSource(name="B", kind="point", profile="flat", rates={SPECIES: rate_b}, lat=12.015, lon=77.035),
+    ]
+    grid = CTMGrid(city)
+    engine = EmissionEngine(grid, sources=combined_sources)
+    for wind, k_h, h_mix in zip(wind_history, k_h_history, mixing_height_history):
+        engine.inject(hour_local=8.0, dt=city.dt_seconds, mixing_height_m=h_mix)
+        f = grid.get_field(SPECIES)
+        f = advect(f, wind["u"], wind["v"], grid.dx, grid.dy, city.dt_seconds, 0.0)
+        f = diffuse(f, k_h, grid.dx, grid.dy, city.dt_seconds)
+        f = deposit(f, city.species[SPECIES].v_dep_m_s, h_mix, city.dt_seconds)
+        grid.set_field(SPECIES, f)
+    actual = grid.get_field(SPECIES).astype(np.float64)
+
+    max_abs = float(np.max(np.abs(actual)))
+    rel_err = float(np.max(np.abs(actual - predicted))) / max_abs
+    print(f"\n[inverse linearity] max|actual - H@rates| relative to max field value: {rel_err:.2e}")
+    assert rel_err < 1e-5
+
+
+def test_solve_recovers_known_rates_with_synthetic_data():
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.01})]
+    city = _make_city(background=0.0, sensors=sensors)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.06)
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 60
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [10.0] * n_steps
+    mixing_height_history = [500.0] * n_steps
+    x_true = np.array([2.0, 0.5])
+
+    time_indices = list(range(10, n_steps, 5))
+    obs_template = [InversionObservation(sensor_id="S1", time_index=t, enhancement=0.0) for t in time_indices]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+
+    rng = np.random.default_rng(0)
+    y = H @ x_true + rng.normal(0, 0.01, size=H.shape[0])
+    observations = [InversionObservation(sensor_id="S1", time_index=t, enhancement=yy) for t, yy in zip(time_indices, y)]
+
+    result = inv.solve(H, observations)
+    print(f"\n[inverse solve] x_hat={result.x_hat}, marginal_std={result.marginal_std}, true={x_true}, chi2_per_obs={result.chi2_per_obs:.3f}")
+
+    assert np.all(np.abs(result.x_hat - x_true) <= 3 * result.marginal_std)
+    assert 0.1 < result.chi2_per_obs < 5.0  # roughly calibrated, not wildly off
+
+
+def test_identifiability_trap_end_to_end_through_real_simulator():
+    """THE worked example for CLAUDE.md's "Adjoint inverse layer" item 3 --
+    read this test top to bottom as documentation of the identifiability
+    lesson, not just a pass/fail check.
+
+    Three spatially-separated candidate zones (upwind, a decoy with NO
+    real source -- a true-negative check, and downwind), ground truth
+    generated by the REAL Simulator (independent of SourceInversion's own
+    code) with only two of the three zones actually emitting. Wind fully
+    transits the domain within the observation window (the trap's
+    precondition -- see CLAUDE.md's explanation of why this matters), so a
+    SINGLE end-of-window snapshot across several receptors makes the three
+    zone columns of H nearly collinear (verified directly). Stacking
+    observations across TIME at a single receptor instead decorrelates
+    them and recovers all three rates -- including correctly concluding
+    the decoy zone emits ~nothing.
+    """
+    true_rate_upwind, true_rate_decoy, true_rate_downwind = 3.0, 0.0, 1.2
+    x_true = np.array([true_rate_upwind, true_rate_decoy, true_rate_downwind])
+
+    lat = 12.015
+    lon_upwind, lon_decoy, lon_downwind = 77.01, 77.05, 77.09
+    sensor_lats = [12.005, 12.010, 12.015, 12.020, 12.025]
+    sensor_lon = 77.16  # downwind of all three candidate zones
+
+    # ONLY upwind and downwind are REAL sources -- the decoy zone is a
+    # legitimate candidate location (a plausible place a source COULD be)
+    # that the inversion has never been told is actually empty.
+    sources = [
+        EmissionSource(name="srcUp", kind="point", profile="flat", rates={SPECIES: true_rate_upwind}, lat=lat, lon=lon_upwind),
+        EmissionSource(name="srcDown", kind="point", profile="flat", rates={SPECIES: true_rate_downwind}, lat=lat, lon=lon_downwind),
+    ]
+    sigma_obs = 0.03
+    sensors = [
+        Sensor(id=f"S{i}", lat=slat, lon=sensor_lon, type="test", species_error_sigma={SPECIES: sigma_obs})
+        for i, slat in enumerate(sensor_lats)
+    ]
+    city = _make_city(nx=60, ny=30, background=0.0, sensors=sensors, v_dep=0.0002, emission_sources=sources, wind_history_hours=6.0)
+
+    u_wind = 5.0
+    n_steps = 300
+    domain_transit_s = (city.domain.nx * city.domain.dx) / u_wind
+    window_s = n_steps * city.dt_seconds
+    assert domain_transit_s < window_s  # the trap's precondition: wind fully transits the domain within the run
+
+    sim = Simulator(city)
+    stations = [StationObservation("M1", lat=12.02, lon=77.0, wind_speed_m_s=u_wind, wind_dir_deg=270.0, temp_c=27.0, rh_pct=50.0)]
+
+    snapshot_times = list(range(10, n_steps, 5))
+    field_snapshots = {}
+    mixing_height_history = []
+    for t in range(n_steps):
+        result = sim.step(stations)
+        mixing_height_history.append(result["met"]["mixing_height_m"])
+        if t in snapshot_times or t == n_steps - 1:
+            field_snapshots[t] = sim.grid.get_field(SPECIES).astype(np.float64).copy()
+
+    wind_history = list(sim.wind_history)
+    k_h_history = list(sim.k_h_history)
+
+    # independently constructed zones -- the inversion never sees the real EmissionSource objects
+    zone_up = Zone(name="upwind", kind="point", lat=lat, lon=lon_upwind)
+    zone_decoy = Zone(name="decoy", kind="point", lat=lat, lon=lon_decoy)
+    zone_down = Zone(name="downwind", kind="point", lat=lat, lon=lon_downwind)
+    inv = SourceInversion(city, SPECIES, [zone_up, zone_decoy, zone_down])
+
+    rng = np.random.default_rng(0)
+
+    # --- STEP 1: a SINGLE end-of-window snapshot across all 5 receptors ---
+    snapshot_template = [InversionObservation(sensor_id=s.id, time_index=n_steps - 1, enhancement=0.0) for s in sensors]
+    H_snapshot = inv.assemble_H(wind_history, k_h_history, mixing_height_history, snapshot_template)
+    y_snapshot = (
+        np.array([field_snapshots[n_steps - 1][sim.grid.latlon_to_cell(s.lat, s.lon)] for s in sensors])
+        + rng.normal(0, sigma_obs, size=len(sensors))
+    )
+    snapshot_obs = [InversionObservation(sensor_id=s.id, time_index=n_steps - 1, enhancement=yy) for s, yy in zip(sensors, y_snapshot)]
+    result_snapshot = inv.solve(H_snapshot, snapshot_obs)
+    cond_snapshot = float(np.linalg.cond(H_snapshot.T @ H_snapshot))
+    corr_snapshot = np.corrcoef(H_snapshot.T)
+
+    # --- STEP 2: the SAME ground-truth run, but stacked across TIME at ONE receptor ---
+    multi_time_indices = [t for t in snapshot_times if t <= 200]
+    multi_template = [InversionObservation(sensor_id="S2", time_index=t, enhancement=0.0) for t in multi_time_indices]
+    H_multi = inv.assemble_H(wind_history, k_h_history, mixing_height_history, multi_template)
+    y_multi = (
+        np.array([field_snapshots[t][sim.grid.latlon_to_cell(12.015, sensor_lon)] for t in multi_time_indices])
+        + rng.normal(0, sigma_obs, size=len(multi_time_indices))
+    )
+    multi_obs = [InversionObservation(sensor_id="S2", time_index=t, enhancement=yy) for t, yy in zip(multi_time_indices, y_multi)]
+    result_multi = inv.solve(H_multi, multi_obs)
+    cond_multi = float(np.linalg.cond(H_multi.T @ H_multi))
+
+    print(
+        f"\n[identifiability trap, end-to-end] true rates: upwind={true_rate_upwind}, "
+        f"decoy={true_rate_decoy} (TRUE ZERO), downwind={true_rate_downwind}\n"
+        f"  domain transit={domain_transit_s:.0f}s < window={window_s:.0f}s (the trap's precondition)\n"
+        f"  H column correlation matrix (single snapshot):\n{corr_snapshot}\n"
+        f"  SINGLE SNAPSHOT (5 receptors, t=final only): cond(H^T H)={cond_snapshot:.3e}\n"
+        f"    x_hat={result_snapshot.x_hat}\n"
+        f"    std  ={result_snapshot.marginal_std}\n"
+        f"    true ={x_true}\n"
+        f"  MULTI-TIME ({len(multi_time_indices)} times, 1 receptor): cond(H^T H)={cond_multi:.1f}\n"
+        f"    x_hat={result_multi.x_hat}\n"
+        f"    std  ={result_multi.marginal_std}\n"
+        f"    true ={x_true}"
+    )
+
+    # --- STEP 3: the trap, demonstrated for real ---
+    assert np.all(corr_snapshot[np.triu_indices(3, k=1)] > 0.99)  # every pair of columns nearly collinear
+    assert cond_snapshot > 1e5
+    # a genuine, visible failure -- not just "wide error bars": both real
+    # sources come out with the WRONG SIGN, and/or the decoy (truly zero)
+    # zone is estimated as large as or larger than either real source.
+    wrong_sign = (np.sign(result_snapshot.x_hat[0]) != np.sign(true_rate_upwind)) or (
+        np.sign(result_snapshot.x_hat[2]) != np.sign(true_rate_downwind)
+    )
+    decoy_misranked = abs(result_snapshot.x_hat[1]) >= min(abs(result_snapshot.x_hat[0]), abs(result_snapshot.x_hat[2]))
+    assert wrong_sign or decoy_misranked
+
+    # --- STEP 4: the fix, demonstrated for real ---
+    assert cond_multi < cond_snapshot / 100  # dramatically better conditioned
+    # every recovered rate within ~3 posterior std of truth (coverage, not
+    # an arbitrary flat percentage -- see CLAUDE.md's explanation)
+    assert np.all(np.abs(result_multi.x_hat - x_true) <= 3 * result_multi.marginal_std)
+    # the decoy zone (true zero) lands near zero
+    assert abs(result_multi.x_hat[1]) <= 3 * result_multi.marginal_std[1]
+    # correct relative ranking between the two REAL sources
+    assert result_multi.x_hat[0] > result_multi.x_hat[2]
+
+    # --- STEP 5: redundant observations shrink posterior std ---
+    extra_time_indices = list(range(10, 60, 5))
+    extra_template = [InversionObservation(sensor_id="S2", time_index=t, enhancement=0.0) for t in extra_time_indices]
+    H_extra = inv.assemble_H(wind_history, k_h_history, mixing_height_history, extra_template)
+    y_extra = (
+        np.array([field_snapshots[t][sim.grid.latlon_to_cell(12.015, sensor_lon)] for t in extra_time_indices])
+        + rng.normal(0, sigma_obs, size=len(extra_time_indices))
+    )
+    extra_obs = [InversionObservation(sensor_id="S2", time_index=t, enhancement=yy) for t, yy in zip(extra_time_indices, y_extra)]
+    result_combined = inv.solve(np.vstack([H_multi, H_extra]), multi_obs + extra_obs)
+    print(
+        f"  + {len(extra_time_indices)} redundant observations: std {result_multi.marginal_std} "
+        f"-> {result_combined.marginal_std}"
+    )
+    assert np.all(result_combined.marginal_std < result_multi.marginal_std)
+
+    # --- STEP 6: a species not declared in the city config is rejected cleanly at construction ---
+    with pytest.raises(ValueError, match="o3"):
+        SourceInversion(city, "o3", [zone_up])
+
+
+def test_zero_true_emission_zone_recovered_near_zero_with_default_prior():
+    """Adversarial case: a zone that TRULY emits zero. With the default
+    weak/uninformative prior, the estimate should land near 0 within its
+    own posterior uncertainty -- not biased toward some spurious value."""
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.01})]
+    city = _make_city(background=0.0, sensors=sensors)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.06)  # truly zero
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 60
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [10.0] * n_steps
+    mixing_height_history = [500.0] * n_steps
+    x_true = np.array([2.0, 0.0])
+
+    time_indices = list(range(10, n_steps, 5))
+    obs_template = [InversionObservation(sensor_id="S1", time_index=t, enhancement=0.0) for t in time_indices]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    rng = np.random.default_rng(0)
+    y = H @ x_true + rng.normal(0, 0.01, size=H.shape[0])
+    observations = [InversionObservation(sensor_id="S1", time_index=t, enhancement=yy) for t, yy in zip(time_indices, y)]
+
+    result = inv.solve(H, observations)
+    print(f"\n[zero-emission zone] x_hat={result.x_hat}, marginal_std={result.marginal_std}, true={x_true}")
+    assert abs(result.x_hat[1]) <= 3 * result.marginal_std[1]
+
+
+def test_zero_variance_prior_raises_clear_error_not_bare_linalg_error():
+    """Adversarial case: Sx with an EXACT 0.0 variance on one zone's
+    diagonal -- a 'we are certain of this rate' prior, a legitimate
+    Bayesian limiting case this solver does NOT support (it would need a
+    hard-equality-constrained solve, not a matrix inverse). Before this
+    check, np.linalg.inv(Sx) raised a bare `LinAlgError: Singular matrix`
+    with no indication of what went wrong; must now raise a clear,
+    actionable ValueError naming the offending zone, and a strictly-
+    positive-but-tiny Sx (the documented workaround) must still work."""
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.01})]
+    city = _make_city(background=0.0, sensors=sensors)
+    zone_a = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    zone_b = Zone(name="B", kind="point", lat=12.015, lon=77.06)
+    inv = SourceInversion(city, SPECIES, [zone_a, zone_b])
+
+    n_steps = 30
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [10.0] * n_steps
+    mixing_height_history = [500.0] * n_steps
+    time_indices = [10, 15, 20, 25]
+    obs_template = [InversionObservation(sensor_id="S1", time_index=t, enhancement=0.0) for t in time_indices]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    observations = [InversionObservation(sensor_id="S1", time_index=t, enhancement=1.0) for t in time_indices]
+
+    with pytest.raises(ValueError, match="B"):
+        inv.solve(H, observations, x_prior=np.array([0.0, 0.0]), Sx=np.diag([1e12, 0.0]))
+
+    # the documented workaround (tiny but strictly positive variance) works
+    result = inv.solve(H, observations, x_prior=np.array([0.0, 0.0]), Sx=np.diag([1e12, 1e-10]))
+    print(f"\n[zero-variance prior workaround] x_hat={result.x_hat}")
+    assert abs(result.x_hat[1]) < 1e-4  # pinned near the dogmatic prior
+
+
+def test_nonpositive_or_nonfinite_sigma_rejected_not_silently_nan():
+    """Adversarial case: sigma=0 on an observation's sensor. Before this
+    check, Sy_inv = diag(1/sigma^2) silently produced inf, propagating to
+    a NaN x_hat/marginal_std with only a RuntimeWarning (easy to miss) --
+    worse than a crash, since the caller gets a result object that LOOKS
+    valid. Must raise instead."""
+    sensors_zero = [Sensor(id="S1", lat=12.015, lon=77.08, type="test", species_error_sigma={SPECIES: 0.0})]
+    city = _make_city(background=0.0, sensors=sensors_zero)
+    zone = Zone(name="A", kind="point", lat=12.015, lon=77.01)
+    inv = SourceInversion(city, SPECIES, [zone])
+
+    wind_history = [{"u": 2.0, "v": 0.0, "hour_local": 8.0} for _ in range(20)]
+    k_h_history = [10.0] * 20
+    mixing_height_history = [500.0] * 20
+    obs_template = [InversionObservation(sensor_id="S1", time_index=10, enhancement=0.0)]
+    H = inv.assemble_H(wind_history, k_h_history, mixing_height_history, obs_template)
+    observations = [InversionObservation(sensor_id="S1", time_index=10, enhancement=1.0)]
+
+    with pytest.raises(ValueError, match="sigma"):
+        inv.solve(H, observations)
+
+
+def test_species_advisory_reuses_forward_model_deposition_rate():
+    city = _make_city(v_dep=0.01, background=0.0)
+    zone = Zone(name="z1", kind="point", lat=12.015, lon=77.02)
+    inv = SourceInversion(city, SPECIES, [zone])
+
+    mixing_height_m = 500.0
+    expected_k = deposition_rate(0.01, mixing_height_m)
+    expected_half_life = np.log(2) / expected_k
+
+    short_transit = expected_half_life * 0.01
+    long_transit = expected_half_life * 10.0
+
+    advisory_short = inv.species_advisory(transit_time_s=short_transit, mixing_height_m=mixing_height_m)
+    advisory_long = inv.species_advisory(transit_time_s=long_transit, mixing_height_m=mixing_height_m)
+
+    print(
+        f"\n[species advisory] half_life={advisory_short.half_life_s:.1f}s (expected {expected_half_life:.1f}s)\n"
+        f"  short transit ({short_transit:.1f}s): quasi_conservative={advisory_short.quasi_conservative}\n"
+        f"  long transit ({long_transit:.1f}s): quasi_conservative={advisory_long.quasi_conservative}"
+    )
+
+    assert advisory_short.half_life_s == pytest.approx(expected_half_life)
+    assert advisory_short.quasi_conservative is True
+    assert advisory_long.quasi_conservative is False
+    assert "screening-grade" in advisory_long.message
+
+
+def test_backward_footprint_screening_keeps_true_source_drops_decoy():
+    sensors = [Sensor(id="S1", lat=12.015, lon=77.06, type="test", species_error_sigma={SPECIES: 1.0})]
+    city = _make_city(nx=60, ny=30, background=10.0, sensors=sensors, v_dep=0.0002)
+    zone_true = Zone(name="true_upwind", kind="point", lat=12.015, lon=77.02)
+    zone_decoy = Zone(name="decoy_downwind", kind="point", lat=12.015, lon=77.12)
+    inv = SourceInversion(city, SPECIES, [zone_true, zone_decoy])
+
+    receptor_cell = inv._grid.latlon_to_cell(12.015, 77.06)
+    n_steps = 25  # tuned so backward-displaced particles land right around zone_true, well short of zone_decoy
+    wind_history = [{"u": 3.0, "v": 0.0, "hour_local": 8.0} for _ in range(n_steps)]
+    k_h_history = [20.0] * n_steps
+
+    kept = inv.zones_from_footprint_priority(
+        [receptor_cell], wind_history, k_h_history, k_dep=1e-6, dt=60.0, threshold=1e-4, n_particles=3000, seed=1
+    )
+    kept_names = [z.name for z in kept]
+    print(f"\n[backward screening] kept zones: {kept_names}")
+
+    assert "true_upwind" in kept_names
+    assert "decoy_downwind" not in kept_names
+
+

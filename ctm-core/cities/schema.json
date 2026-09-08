@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CTM City Configuration",
+  "type": "object",
+  "required": ["city_name", "domain", "utc_offset_hours", "species", "diurnal_profiles"],
+  "properties": {
+    "city_name": {"type": "string"},
+    "domain": {
+      "type": "object",
+      "required": ["lat_sw", "lon_sw", "nx", "ny", "dx", "dy"],
+      "properties": {
+        "lat_sw": {"type": "number", "minimum": -90, "maximum": 90},
+        "lon_sw": {"type": "number", "minimum": -180, "maximum": 180},
+        "nx": {"type": "integer", "minimum": 4},
+        "ny": {"type": "integer", "minimum": 4},
+        "dx": {"type": "number", "exclusiveMinimum": 0},
+        "dy": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "utc_offset_hours": {
+      "type": "number",
+      "minimum": -12,
+      "maximum": 14,
+      "description": "Fractional local-time offset from UTC, e.g. 5.5 for IST. Never hardcode this elsewhere."
+    },
+    "dt_seconds": {"type": "number", "exclusiveMinimum": 0, "default": 60},
+    "wind_history_hours": {"type": "number", "exclusiveMinimum": 0, "default": 24},
+    "species": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["unit", "v_dep_m_s", "background_conc"],
+        "properties": {
+          "unit": {"type": "string", "enum": ["ug_m3", "mg_m3"]},
+          "v_dep_m_s": {"type": "number", "minimum": 0},
+          "background_conc": {"type": "number", "minimum": 0},
+          "clim_max": {"type": "number", "description": "gross-outlier QC ceiling"},
+          "notes": {"type": "string"}
+        }
+      }
+    },
+    "diurnal_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "number", "minimum": 0},
+        "minItems": 24,
+        "maxItems": 24,
+        "description": "24 values indexed by LOCAL hour (0-23), fraction of daily mean. Normalised to mean 1 by the loader."
+      }
+    },
+    "emission_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "profile", "rates"],
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {"type": "string", "enum": ["point", "area"]},
+          "lat": {"type": "number"},
+          "lon": {"type": "number"},
+          "lat_sw": {"type": "number"},
+          "lon_sw": {"type": "number"},
+          "lat_ne": {"type": "number"},
+          "lon_ne": {"type": "number"},
+          "profile": {"type": "string"},
+          "rates": {
+            "type": "object",
+            "description": "species name -> emission rate in that species' declared unit per m^2 per s",
+            "additionalProperties": {"type": "number"}
+          }
+        }
+      }
+    },
+    "sensors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "lat", "lon", "type", "species_error_sigma"],
+        "properties": {
+          "id": {"type": "string"},
+          "lat": {"type": "number"},
+          "lon": {"type": "number"},
+          "type": {"type": "string"},
+          "species_error_sigma": {
+            "type": "object",
+            "additionalProperties": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "assimilation": {
+      "type": "object",
+      "properties": {
+        "bg_error_fraction": {"type": "number", "default": 0.30},
+        "correlation_length_m": {"type": "number", "default": 5000},
+        "localisation_radius_m": {"type": "number", "default": 10000}
+      }
+    },
+    "climatology": {
+      "type": "object",
+      "description": "Per-city fallback met defaults used when no valid weather station reading is available.",
+      "properties": {
+        "default_wind_speed_m_s": {"type": "number", "minimum": 0, "default": 1.0},
+        "default_wind_dir_deg": {"type": "number", "minimum": 0, "maximum": 360, "default": 0.0},
+        "default_temp_c": {"type": "number", "default": 25.0},
+        "default_rh_pct": {"type": "number", "minimum": 0, "maximum": 100, "default": 60.0}
+      }
+    }
+  }
+}
