@@ -178,7 +178,73 @@ time this was written)
   disclosed behavior, not a bug, and is not yet fixed (no live wind feed
   exists).
 
+### Known limitation of the SHIPPED feature: real saturation rate over the full committed month
+
+This is a finding about the directional tracer described above -- already
+built, tested, and merged -- not about a future phase. Swept
+`run_adjoint_tracer()` (via `load_nellore_wind_history()`, the exact
+function the real worker calls) across all 744 real hours in
+`data/raw/meteostat_nellore/43245_202508.csv`, at the real `NEL-001`
+receptor, with the actual shipped config (`wind_history_hours: 1`):
+
+| metric | value |
+|---|---|
+| fully saturated (confidence == 0.0) | 642 / 744 (86.3%) |
+| usable signal (confidence > 0.1) | 87 / 744 (11.7%) |
+| reasonably usable (confidence > 0.5) | 75 / 744 (10.1%) |
+| mean confidence | 0.10 |
+| mean boundary_inflow_fraction | 0.89 |
+
+**At this domain size and Nellore's real wind climatology, the
+directional-screening feature will report "no usable estimate" on
+roughly 9 of 10 real spikes. This is the DOMINANT real behavior, not an
+edge case.** The single successful example in the E2E run above
+(`confidence: 0.998`) was a real result, but a favorable, unrepresentative
+one -- picked deliberately because it was one of the few hours that
+works, not because most hours work. Do not read that E2E success as
+evidence the feature works reliably; read this table as what it actually
+does across a real month.
+
 ## Phase I4 — NOT STARTED
+
+### Forward-response check, done ahead of starting this phase (real evidence, not a plan)
+
+Before scoping any Q-estimation work, checked whether the FORWARD
+unit-response approach (`attribution/inverse.py`'s already-existing
+`SourceInversion.assemble_H()` / `_run_unit_response()` -- reused, not
+reimplemented) suffers the same domain-exit problem as the backward
+tracer above. It does not, in the cases checked: real wind at 2 real
+hours (2025-08-01 00:00, 3.81 m/s; 2025-08-15 11:00, 5.50 m/s) x 3 zone
+placements each (upwind 2km, upwind 5km, crosswind 2km/misaligned),
+using the live simulator's real `dt_seconds=60` resolution:
+
+| real hour | placement | H (conc/unit rate at NEL-001, 3h) |
+|---|---|---|
+| 2025-08-01 00:00 (3.81 m/s) | upwind 2km | 1.84e-02 |
+| | upwind 5km | 6.80e-03 |
+| | crosswind 2km (misaligned) | 3.55e-05 |
+| 2025-08-15 11:00 (5.50 m/s) | upwind 2km | 2.04e-01 |
+| | upwind 5km | 1.27e-01 |
+| | crosswind 2km (misaligned) | 4.13e-09 |
+
+Upwind placement gives a real, substantial, physically-sensible signal;
+misaligned placement drops 3-9 orders of magnitude -- genuinely
+discriminating geometry, not degenerate. The likely reason this differs
+from the backward tracer: `assemble_H` only needs a plume's near-field
+LEADING EDGE to reach a receptor a few km away -- it does not need the
+whole particle ensemble/mass budget to stay bounded inside the domain
+the way the backward tracer's global accounting does. That global
+containment requirement is exactly what the 86.3% saturation rate above
+is measuring, and the forward check simply never hits it at short range.
+
+**Caveat, stated as plainly as the result above**: this is 6 real test
+cases at short zone-receptor distances (2-5km), not proof across all
+geometries. Zones near the domain edge, longer ranges, or other species
+have not been checked and may not behave this well.
+
+**Forward pointer**: given this evidence, Phase I4 should be scoped as a
+SHORT-RANGE (2-5km) single-zone estimator, not assumed to work at longer
+range without further testing.
 
 Single-zone emission-rate (Q) estimation, feeding `backend/lib/plume.js`.
 Explicitly out of scope until Phase I3 above is confirmed solid in a real
