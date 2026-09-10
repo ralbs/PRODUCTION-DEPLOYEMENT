@@ -1,0 +1,52 @@
+{
+  "city_name": "LiveDeployment_Nellore",
+  "_purpose": "Config for the ACTUAL currently-live ESP32 deployment (device ESP32-001, station NEL-001 -- see firmware/config.h), NOT a research/validation exercise like bangalore.json. Scope is deliberately narrow: only fields backed by something real and verified are populated. Nothing here is a placeholder guess -- see per-field notes.",
+
+  "domain": {
+    "lat_sw": 14.3207,
+    "lon_sw": 79.8607,
+    "nx": 54,
+    "ny": 54,
+    "dx": 500.0,
+    "dy": 500.0
+  },
+  "_domain_verification": "Center (14.442, 79.986) is the REAL coordinate pair the physical ESP32 device (station NEL-001) is firmware-configured with (firmware/config.h: STATION_LAT/STATION_LON) and actually transmits in every real telemetry payload -- confirmed live via the deployed backend's /api/telemetry endpoint. lat_sw/lon_sw place this exact point at the domain center with a 13.5km half-width each direction (same nx/ny/dx/dy convention as cities/bangalore.json, i.e. a 27km x 27km domain at 500m resolution) -- the EXTENT/resolution choice is an engineering default reused from Bangalore, not a verified fact about Nellore's real urban extent; only the CENTER coordinate is independently verified real data.",
+
+  "utc_offset_hours": 5.5,
+  "_utc_offset_note": "India Standard Time, no DST -- always exactly +5:30, verified fact (not city-specific approximation).",
+
+  "dt_seconds": 60,
+  "wind_history_hours": 1,
+  "_wind_history_hours_note": "Was 24 (copied from bangalore.json without checking it against THIS domain's actual size). Empirically tested against the real committed Nellore wind (data/raw/meteostat_nellore/43245_202508.csv) via scripts/source_direction_worker.py's run_adjoint_tracer(): a 24h window loses 99.9% of backward-traced mass to the boundary; even a 2-CONSECUTIVE-real-hour window at typically-brisk real coastal wind (~3.7-4.1 m/s, 2025-08-01 00:00-02:00 UTC, NOT an outlier -- this site is consistently breezier than Bangalore) still loses ~99.7% (net 2h displacement in a fairly persistent direction exceeds the ~13.5km half-width even at 'calm' real speed). A SINGLE real hourly step (as_of=2025-08-01T00:00Z, speed=3.81 m/s, dir_from=252deg) DOES produce a real, high-confidence result: bearing=251.99deg (matches the real wind direction almost exactly, as physically expected), distance=13.7km, confidence=0.999. So 1h is the largest value that has any chance of staying mostly interior at this site's real wind climatology -- and even 1h will still saturate (confidence~0) whenever that hour's real wind happens to run faster than roughly 3.75 m/s (13500m / 3600s), which real data here shows is common, not rare. This is NOT a parameter that can be tuned to guarantee a confident result: it reflects a genuine, disclosed mismatch between this domain's size (reused from Bangalore, never verified against Nellore's real urban extent -- see _domain_verification above) and this site's real wind speeds. Enlarging the domain would need real evidence of Nellore's actual relevant emission-source extent, which does not exist yet (see emission_sources' note) -- inventing a bigger domain just to make traces stay interior more often would be exactly the kind of unverified placeholder this config otherwise avoids.",
+
+  "species": {
+    "pm25": {"unit": "ug_m3", "v_dep_m_s": 0.0005, "background_conc": 15.0, "clim_max": 500},
+    "pm10": {"unit": "ug_m3", "v_dep_m_s": 0.005, "background_conc": 35.0, "clim_max": 1000},
+    "co": {"unit": "mg_m3", "v_dep_m_s": 1e-06, "background_conc": 1.0, "clim_max": 30,
+      "notes": "CO in mg/m3 to match MQ-7/MH-Z19 sensor convention; every other species is ug/m3 -- convert explicitly at any boundary that compares species."},
+    "no2": {"unit": "ug_m3", "v_dep_m_s": 0.002, "background_conc": 10.0, "clim_max": 300}
+  },
+  "_species_note": "v_dep_m_s/clim_max are literature-standard deposition-velocity/QC-ceiling constants (Seinfeld & Pandis / Zhang et al., same source cities/bangalore.json cites) -- physical properties of the species, not Nellore-specific facts, so reuse across cities is legitimate. background_conc values, however, are Bangalore's generic urban defaults COPIED HERE UNVERIFIED for Nellore -- Nellore is a smaller, less industrial city and its real ambient background is almost certainly different. Species list is limited to what this deployment's sensor suite can actually speak to (pm25/pm10/co/no2) rather than the full Bangalore set (so2/bc dropped -- the ESP32's gas channels are nh3/h2s/h2/mq135/voc_gas_ohm/mq7_co, none of which map cleanly onto so2 or bc without a real calibration this project doesn't have).",
+
+  "diurnal_profiles": {
+    "24h": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+  },
+  "_diurnal_profiles_note": "Only the flat/uninformative profile is included because emission_sources is empty below -- there is nothing yet to apply a real or assumed diurnal shape to. Add a real profile only when a real emission source is added.",
+
+  "emission_sources": [],
+  "_emission_sources_note": "Deliberately empty. No real emission-inventory data (named roads, industrial areas, etc.) has been verified for Nellore the way cities/bangalore.json's sources were for Bangalore. Per this project's rule against fabricated placeholders: do not populate this with invented plausible-sounding sources. If/when a real inventory becomes available, add it here with the same sourcing rigor as bangalore.json's entries.",
+
+  "sensors": [
+    {
+      "id": "NEL-001",
+      "lat": 14.442,
+      "lon": 79.986,
+      "type": "ESP32-DIY-AQMS",
+      "species_error_sigma": {"pm25": 8.0, "pm10": 12.0, "co": 0.3, "no2": 6.0},
+      "_source": "The one REAL sensor this deployment has: the actual live ESP32 device (device_id ESP32-001), coordinates from firmware/config.h, confirmed live and reporting via the new backend's /api/telemetry/latest endpoint.",
+      "_species_error_sigma_note": "ENGINEERING-JUDGMENT PLACEHOLDERS, not a validated instrument spec -- same caveat cities/bangalore.json states for its own sigma values, but more pronounced here: this is a low-cost DIY sensor suite (PMS5003 + MiCS/MQ-series gas sensors), not a reference-grade CAAQM analyzer like Bangalore's CPCB/KSPCB network, so these sigmas are wider guesses, not even 'reasonable orders of magnitude for reference-grade' the way Bangalore's are described."
+    }
+  ],
+
+  "_met_source": "See ctm-core/met/ingest_real_met.py's module docstring, 'STATIONS WIRED IN SO FAR' -- WMO station 43245 'Nellore', 0.9km from this domain's real center coordinate, verified by direct bulk-archive download and row-level inspection (not just station-index metadata). Real hourly coverage confirmed through 2025-10-15; a complete real August 2025 month is committed at data/raw/meteostat_nellore/43245_202508.csv. This is REAL HISTORICAL wind (usable for hindcast-style validation the same way Bangalore's is), NOT a live/current feed -- no live real-time wind source has been wired in for this deployment."
+}

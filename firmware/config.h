@@ -131,7 +131,7 @@
 // ============ WiFi Config ============
 #define WIFI_SSID         "Vinni"
 #define WIFI_PASSWORD     "vinay123"
-#define SERVER_URL        "https://aqms-dedk.onrender.com/api/telemetry"
+#define SERVER_URL        "https://aqhi-backend.onrender.com/api/telemetry"
 #define DEVICE_API_KEY    "AQMI-DEVICE-01"
 
 // ============ SIM800C GPRS Config ============
@@ -139,7 +139,7 @@
 #define GPRS_USER         ""
 #define GPRS_PASS         ""
 
-#define SERVER_HOST       "aqms-dedk.onrender.com"
+#define SERVER_HOST       "aqhi-backend.onrender.com"
 #define SERVER_PORT       443
 #define SERVER_PATH       "/api/telemetry"
 

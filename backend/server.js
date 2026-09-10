@@ -30,6 +30,7 @@ async function main() {
   app.use("/api/plume", require("./routes/plume"));
   app.use("/api/stations", require("./routes/stations"));
   app.use("/api/forecast", require("./routes/forecast"));
+  app.use("/api/source-direction", require("./routes/source-direction"));
 
   const apollo = new ApolloServer({ typeDefs, resolvers });
   await apollo.start();

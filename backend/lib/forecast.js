@@ -115,4 +115,57 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   };
 }
 
-module.exports = { buildForecast };
+// -------------------------------------------------------------------
+// checkSpike — is the LATEST real reading for a station outside its own
+// one-step-ahead Holt-Winters confidence interval? Reuses holtWinters()
+// verbatim (same function buildForecast() above uses) -- fit EXCLUDES the
+// latest reading (so the interval is a genuine before-the-fact forecast,
+// not one that already saw the point it's being tested against), then
+// compares the actual latest AQI against [predicted +/- sigma*sqrt(1)].
+// This is the spike trigger for the source-direction worker
+// (scripts/source_direction_worker.py) -- see PROMPT_FLOW_INTEGRATION.md.
+// -------------------------------------------------------------------
+async function checkSpike(stationId, lookbackHours = 168) {
+  const docs = await Telemetry.find({ "meta.station_id": stationId })
+    .sort({ timestamp: -1 })
+    .limit(Math.min(lookbackHours, 720))
+    .lean();
+
+  if (!docs.length) return null;
+
+  const orderedDocs = [...docs].reverse();
+  const aqiSeries = orderedDocs
+    .map((d) => calculateAQI(d.pollutants)?.aqi ?? null)
+    .filter((v) => v !== null);
+
+  // Need at least 3 points to FIT (same floor holtWinters() itself enforces)
+  // plus 1 more held out to test against.
+  if (aqiSeries.length < 4) return null;
+
+  const actualAqi = aqiSeries[aqiSeries.length - 1];
+  const fitSeries = aqiSeries.slice(0, -1);
+
+  const hw = holtWinters(fitSeries, 0.3, 0.1, 1); // horizon=1: only need the next step
+  if (!hw) return null;
+
+  const predictedAqi = hw.forecast[0];
+  const band = hw.sigma * Math.sqrt(1); // sigma*sqrt(h), h=1
+  const predictedLow = Math.max(0, predictedAqi - band);
+  const predictedHigh = predictedAqi + band;
+  const isSpike = actualAqi < predictedLow || actualAqi > predictedHigh;
+
+  const lastDoc = orderedDocs[orderedDocs.length - 1];
+
+  return {
+    station_id: stationId,
+    is_spike: isSpike,
+    actual_aqi: actualAqi,
+    predicted_aqi: predictedAqi,
+    predicted_low: predictedLow,
+    predicted_high: predictedHigh,
+    sigma: hw.sigma,
+    timestamp: lastDoc.timestamp,
+  };
+}
+
+module.exports = { buildForecast, checkSpike, holtWinters };
