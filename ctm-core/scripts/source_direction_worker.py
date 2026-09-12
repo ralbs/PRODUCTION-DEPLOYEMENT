@@ -160,12 +160,45 @@ def run_adjoint_tracer(
     )
 
     total_interior = float(result.interior_probability.sum())
+    n_sectors = len(result.boundary_exit_by_sector)
+    sector_width_deg = 360.0 / n_sectors
+
     if total_interior <= 0.0:
-        # All particle mass exited the domain -- no interior estimate to report.
+        # The dominant real failure mode at this project's domain size --
+        # see PROMPT_FLOW_INTEGRATION.md's 744-hour saturation finding
+        # (86.3% of real hours land exactly here). Rather than reporting
+        # "no estimate", fall back to the dominant BOUNDARY EXIT sector --
+        # which way the traced mass actually left the domain is still a
+        # real, honest (if coarser and lower-confidence) directional
+        # signal, distinct from the interior-centroid estimate below.
+        total_boundary = float(result.boundary_exit_by_sector.sum())
+        if total_boundary <= 0.0:
+            # Genuinely no particles went anywhere -- shouldn't happen
+            # with n_particles > 0, but never silently fabricate a bearing.
+            return {
+                "bearing_deg": None, "distance_m": None, "confidence": 0.0,
+                "boundary_inflow_fraction": result.boundary_inflow_fraction,
+                "n_particles": result.n_particles, "seed": seed, "estimate_tier": "none",
+            }
+
+        dominant_sector = int(np.argmax(result.boundary_exit_by_sector))
+        dominant_fraction = float(result.boundary_exit_by_sector[dominant_sector] / total_boundary)
+        uniform_fraction = 1.0 / n_sectors
+        # 0 when exit weight is spread evenly across all sectors (everything
+        # hit the boundary, but with no real directional preference -- a
+        # genuinely uninformative case); 1 when it's entirely concentrated
+        # in one sector (as directionally clear as the boundary can be).
+        boundary_confidence = max(0.0, (dominant_fraction - uniform_fraction) / (1.0 - uniform_fraction))
+
         return {
-            "bearing_deg": None, "distance_m": None, "confidence": 0.0,
+            "bearing_deg": float(dominant_sector * sector_width_deg),
+            "distance_m": None,  # a boundary exit gives a direction, not a distance -- never fabricated
+            "confidence": boundary_confidence,
             "boundary_inflow_fraction": result.boundary_inflow_fraction,
             "n_particles": result.n_particles, "seed": seed,
+            "estimate_tier": "boundary_sector_fallback",
+            "dominant_exit_sector": dominant_sector,
+            "dominant_exit_sector_fraction": dominant_fraction,
         }
 
     ii, jj = np.meshgrid(np.arange(grid.nx), np.arange(grid.ny), indexing="ij")
@@ -190,7 +223,7 @@ def run_adjoint_tracer(
     return {
         "bearing_deg": bearing_deg, "distance_m": distance_m, "confidence": confidence,
         "boundary_inflow_fraction": result.boundary_inflow_fraction,
-        "n_particles": result.n_particles, "seed": seed,
+        "n_particles": result.n_particles, "seed": seed, "estimate_tier": "interior",
     }
 
 
@@ -233,10 +266,15 @@ def process_station(
         }
 
     tracer_result = run_adjoint_tracer(city, station["location"]["lat"], station["location"]["lon"], wind_window)
+    # bearing_deg is None ONLY in the genuine no-particles-anywhere case
+    # (estimate_tier == "none") -- a saturated interior (the dominant real
+    # case, see PROMPT_FLOW_INTEGRATION.md) now falls back to
+    # estimate_tier == "boundary_sector_fallback" instead of None, and is
+    # still posted, with its own honest (possibly low) confidence.
     if tracer_result is None or tracer_result["bearing_deg"] is None:
         return {
             "station_id": station_id, "action": "skipped",
-            "reason": "adjoint trace produced no interior estimate (receptor outside domain, or all particle mass exited)",
+            "reason": "adjoint trace produced no directional signal at all (receptor outside domain, or zero particles reached any boundary sector)",
             "spike": spike,
         }
 
@@ -254,11 +292,12 @@ def process_station(
             "station_id": last_wind_obs.station_id, "as_of": last_wind_ts.isoformat(),
         },
         "bearing_deg": tracer_result["bearing_deg"],
-        "distance_m": tracer_result["distance_m"],
+        "distance_m": tracer_result["distance_m"],  # None for a boundary-fallback estimate -- never fabricated
         "confidence": tracer_result["confidence"],
         "boundary_inflow_fraction": tracer_result["boundary_inflow_fraction"],
         "n_particles": tracer_result["n_particles"],
         "seed": tracer_result["seed"],
+        "estimate_tier": tracer_result["estimate_tier"],
         "label": SOURCE_DIRECTION_LABEL,  # the backend enforces this regardless; sent for clarity/logging only
     }
 

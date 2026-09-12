@@ -176,6 +176,51 @@ def test_receptor_at_domain_corner_with_wind_blowing_out_reports_near_total_boun
     assert np.all(np.isfinite(result.interior_probability))
 
 
+def test_boundary_exit_by_sector_sums_exactly_to_boundary_inflow_fraction():
+    """Exact accounting invariant, the same standard the interior/boundary
+    split already holds itself to: every unit of exited weight must land
+    in exactly one sector, so the sector array must sum to
+    boundary_inflow_fraction to the same precision the interior+boundary
+    identity holds."""
+    dt = 60.0
+    n_steps = 60
+    u, v = 3.0, 3.0
+    wind_history, k_h_history = _flat_history(n_steps, u=u, v=v, k_h=20.0)
+    tracer = AdjointTracer(NX, NY, DX, DY)
+    result = tracer.trace(0, 0, wind_history, k_h_history, k_dep=0.0, dt=dt, n_particles=4000, seed=3)
+
+    sector_sum = result.boundary_exit_by_sector.sum()
+    print(f"\n[adjoint sector accounting] sector_sum={sector_sum:.12f}, "
+          f"boundary_inflow_fraction={result.boundary_inflow_fraction:.12f}")
+    assert sector_sum == pytest.approx(result.boundary_inflow_fraction, abs=1e-9)
+    assert len(result.boundary_exit_by_sector) == 8  # default n_sectors
+
+
+def test_boundary_exit_by_sector_identifies_known_exit_direction():
+    """Receptor placed so a steady EASTWARD wind (u>0, v=0) backward-
+    advects particles due WEST out of the domain -- the dominant exit
+    sector must be the one centered on 270 deg (west), not spread evenly
+    across all 8, and must carry the large majority of exited weight."""
+    dt = 60.0
+    n_steps = 120  # long enough that ~all particles exit west, not just drift
+    u, v = 3.0, 0.0  # steady EASTWARD wind -> backward trace moves particles WEST
+    wind_history, k_h_history = _flat_history(n_steps, u=u, v=v, k_h=10.0)
+    tracer = AdjointTracer(NX, NY, DX, DY)
+    receptor_i, receptor_j = 10, NY // 2  # close enough to the west edge to guarantee exit that way
+
+    result = tracer.trace(receptor_i, receptor_j, wind_history, k_h_history, k_dep=0.0, dt=dt, n_particles=4000, seed=4)
+
+    dominant_sector = int(np.argmax(result.boundary_exit_by_sector))
+    dominant_fraction = result.boundary_exit_by_sector[dominant_sector] / result.boundary_exit_by_sector.sum()
+    print(f"\n[adjoint sector direction] sectors={result.boundary_exit_by_sector}, "
+          f"dominant_sector={dominant_sector} (0=N,45deg steps), dominant_fraction={dominant_fraction:.4f}")
+
+    # sector index 6 = 270 deg = west, per sector k centered on k*45 deg
+    assert dominant_sector == 6
+    assert dominant_fraction > 0.8  # clearly concentrated, not spread evenly (which would be ~0.125/sector)
+    assert result.boundary_inflow_fraction > 0.9  # this scenario should have exited almost entirely
+
+
 def test_trace_ensemble_reports_nonzero_spread_unlike_fixed_seed():
     """Receptor placed close to an edge with enough diffusion/duration
     that SOME (not zero, not all) particles randomly cross the boundary --

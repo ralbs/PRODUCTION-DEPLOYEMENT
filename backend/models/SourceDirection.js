@@ -28,9 +28,18 @@ const sourceDirectionSchema = new mongoose.Schema(
     },
 
     bearing_deg: { type: Number, required: true }, // direction FROM receptor TO the estimated upwind source region
-    distance_m: { type: Number, required: true },
-    confidence: { type: Number, required: true, min: 0, max: 1 }, // 1 - boundary_inflow_fraction
+    // NOT required: a boundary_sector_fallback estimate (see estimate_tier)
+    // gives a direction but genuinely no distance -- null here, never a
+    // fabricated number, distinct from a value that happens to be 0.
+    distance_m: { type: Number, default: null },
+    confidence: { type: Number, required: true, min: 0, max: 1 }, // interior: 1-boundary_inflow_fraction; boundary fallback: sector concentration
     boundary_inflow_fraction: { type: Number, required: true },
+
+    // "interior" (probability-weighted centroid, real distance) or
+    // "boundary_sector_fallback" (dominant compass sector only, no
+    // distance) -- see attribution/adjoint.py's boundary_exit_by_sector
+    // and scripts/source_direction_worker.py's run_adjoint_tracer().
+    estimate_tier: { type: String, enum: ["interior", "boundary_sector_fallback"], required: true },
 
     n_particles: Number,
     seed: mongoose.Schema.Types.Mixed,

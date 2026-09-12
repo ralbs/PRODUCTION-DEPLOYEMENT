@@ -6,7 +6,7 @@ const router = express.Router();
 
 const REQUIRED_TOP = [
   "timestamp", "station_id", "trigger", "wind",
-  "bearing_deg", "distance_m", "confidence", "boundary_inflow_fraction",
+  "bearing_deg", "distance_m", "confidence", "boundary_inflow_fraction", "estimate_tier",
 ];
 
 function validatePayload(body) {
@@ -45,6 +45,7 @@ router.post("/ingest", authenticateDevice, async (req, res) => {
       distance_m: body.distance_m,
       confidence: body.confidence,
       boundary_inflow_fraction: body.boundary_inflow_fraction,
+      estimate_tier: body.estimate_tier,
       n_particles: body.n_particles,
       seed: body.seed,
       // label is deliberately NOT taken from body -- schema default enforces

@@ -39,6 +39,16 @@ class AdjointResult:
     n_particles: int
     n_steps_traced: int
     seed: object
+    # Exiting-particle weight binned by compass sector (bearing FROM the
+    # receptor TO the particle's position at the moment it exits the
+    # domain), length `n_sectors`, summing to exactly `boundary_inflow_fraction`.
+    # Sector k is centered on `k * (360/n_sectors)` degrees (sector 0 = due
+    # north). When interior_probability is near-zero (the dominant real
+    # failure mode at this project's domain size -- see
+    # PROMPT_FLOW_INTEGRATION.md's 744-hour saturation finding), this is
+    # the ONLY real directional signal left: which way the mass actually
+    # left the domain, not nothing.
+    boundary_exit_by_sector: np.ndarray
 
 
 class AdjointTracer:
@@ -58,6 +68,7 @@ class AdjointTracer:
         dt: float,
         n_particles: int = 2000,
         seed=0,
+        n_sectors: int = 8,
     ) -> AdjointResult:
         """Backward-trace an ensemble of particles from receptor (i, j)
         through `wind_history`/`k_h_history` (both ordered OLDEST-first,
@@ -82,13 +93,18 @@ class AdjointTracer:
 
         rng = np.random.default_rng(seed)
 
-        x = np.full(n_particles, (receptor_i + 0.5) * self.dx, dtype=np.float64)
-        y = np.full(n_particles, (receptor_j + 0.5) * self.dy, dtype=np.float64)
+        receptor_x = (receptor_i + 0.5) * self.dx
+        receptor_y = (receptor_j + 0.5) * self.dy
+
+        x = np.full(n_particles, receptor_x, dtype=np.float64)
+        y = np.full(n_particles, receptor_y, dtype=np.float64)
         weight = np.full(n_particles, 1.0 / n_particles, dtype=np.float64)
         active = np.ones(n_particles, dtype=bool)
 
         interior_probability = np.zeros((self.nx, self.ny), dtype=np.float64)
         boundary_inflow_fraction = 0.0
+        boundary_exit_by_sector = np.zeros(n_sectors, dtype=np.float64)
+        sector_width_deg = 360.0 / n_sectors
         domain_x_max = self.nx * self.dx
         domain_y_max = self.ny * self.dy
 
@@ -131,6 +147,18 @@ class AdjointTracer:
             exited = active_idx[out_of_domain]
             if exited.size:
                 boundary_inflow_fraction += float(weight[exited].sum())
+                # Bearing FROM the receptor TO each exiting particle's
+                # position at the moment it exits -- plain compass bearing
+                # (0=N/90=E), the SAME convention
+                # scripts/source_direction_worker.py's interior-centroid
+                # bearing uses, NOT the meteorological wind FROM-direction
+                # convention (that's wind_dir_from_uv, deliberately
+                # different -- see met/weather_station.py).
+                dx_east = x[exited] - receptor_x
+                dy_north = y[exited] - receptor_y
+                bearing_deg = np.degrees(np.arctan2(dx_east, dy_north)) % 360.0
+                sector_idx = np.round(bearing_deg / sector_width_deg).astype(int) % n_sectors
+                np.add.at(boundary_exit_by_sector, sector_idx, weight[exited])
                 active[exited] = False
 
         remaining = np.where(active)[0]
@@ -145,6 +173,7 @@ class AdjointTracer:
             n_particles=n_particles,
             n_steps_traced=len(steps),
             seed=seed,
+            boundary_exit_by_sector=boundary_exit_by_sector,
         )
 
     def trace_ensemble(

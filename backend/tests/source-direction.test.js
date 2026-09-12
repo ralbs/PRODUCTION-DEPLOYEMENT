@@ -23,6 +23,7 @@ const VALID_BODY = {
   distance_m: 3200,
   confidence: 0.82,
   boundary_inflow_fraction: 0.18,
+  estimate_tier: "interior",
   n_particles: 2000,
   seed: 0,
 };
@@ -75,7 +76,25 @@ describe("POST /api/source-direction/ingest", () => {
     expect(createArg.device_id).toBe("WORKER-SOURCE-DIRECTION"); // from auth, not body
     expect(createArg.station_id).toBe("NEL-001"); // grouping only
     expect(createArg.bearing_deg).toBe(271.0);
+    expect(createArg.estimate_tier).toBe("interior");
     expect(createArg.label).toBeUndefined(); // route never passes a label -- schema default enforces it
+  });
+
+  test("accepts a boundary_sector_fallback estimate with a null distance_m", async () => {
+    const fakeStoredDoc = { _id: "def456", label: "estimated upwind direction -- screening only, not confirmed source attribution" };
+    SourceDirection.create.mockResolvedValue(fakeStoredDoc);
+
+    const fallbackBody = { ...VALID_BODY, distance_m: null, estimate_tier: "boundary_sector_fallback" };
+    const res = await request(app)
+      .post("/api/source-direction/ingest")
+      .set("X-Device-Id", "WORKER-SOURCE-DIRECTION")
+      .set("X-Device-Key", "test-worker-key-123")
+      .send(fallbackBody);
+
+    expect(res.status).toBe(201);
+    const createArg = SourceDirection.create.mock.calls[0][0];
+    expect(createArg.distance_m).toBeNull();
+    expect(createArg.estimate_tier).toBe("boundary_sector_fallback");
   });
 
   test("rejects a payload missing a required field with 400, before touching the DB", async () => {
@@ -85,6 +104,18 @@ describe("POST /api/source-direction/ingest", () => {
       .set("X-Device-Id", "WORKER-SOURCE-DIRECTION")
       .set("X-Device-Key", "test-worker-key-123")
       .send(missingBearing);
+
+    expect(res.status).toBe(400);
+    expect(SourceDirection.create).not.toHaveBeenCalled();
+  });
+
+  test("rejects a payload missing estimate_tier with 400, before touching the DB", async () => {
+    const { estimate_tier, ...missingTier } = VALID_BODY;
+    const res = await request(app)
+      .post("/api/source-direction/ingest")
+      .set("X-Device-Id", "WORKER-SOURCE-DIRECTION")
+      .set("X-Device-Key", "test-worker-key-123")
+      .send(missingTier);
 
     expect(res.status).toBe(400);
     expect(SourceDirection.create).not.toHaveBeenCalled();
