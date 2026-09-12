@@ -2,23 +2,24 @@
 stations, checks each for a real Holt-Winters spike (reusing the backend's
 own lib/forecast.js checkSpike() via GET /api/forecast/spike-check --
 NEVER reimplemented here), and on a real trigger runs AdjointTracer
-against the real, verified Nellore wind (met/ingest_real_met.py) to
-produce a bearing/distance/confidence screening estimate, POSTed to the
-real authenticated /api/source-direction/ingest route using the exact
-same authenticateDevice pattern telemetry ingest uses.
+against real wind to produce a bearing/distance/confidence screening
+estimate, POSTed to the real authenticated /api/source-direction/ingest
+route using the exact same authenticateDevice pattern telemetry ingest
+uses.
 
 See PROMPT_FLOW_INTEGRATION.md for the full spec this implements.
 
-IMPORTANT, DISCLOSED LIMITATION (see met/ingest_real_met.py's module
-docstring): the only real wind source wired in for this deployment is
-Meteostat's bulk HISTORICAL archive for station 43245 -- its freshest
-real row is 2025-10-15, not a live feed. `--as-of` lets this worker be
-pointed at any timestamp within that archive's real coverage (for
-testing/backtest use); run with no `--as-of` (defaulting to "now"), a
-live run today will correctly find no real wind for the requested
-window and SKIP every station with a spike, rather than fabricate a
-result. That is the correct, honest behavior until a live wind feed is
-wired in -- not a bug to silently paper over.
+WIND SOURCE, chosen by `--as-of`:
+- Omitted (default, real live run): "now" + met/live_wind.py's real LIVE
+  current-conditions wind (Open-Meteo, no API key needed) for the
+  station's own real coordinates. This closes the gap the previous
+  version of this docstring disclosed ("no live real-time wind source has
+  been wired in") -- see met/live_wind.py's module docstring for the
+  disclosed model-vs-ground-station caveat and the empirical verification
+  of its wind-direction convention.
+- Given (backtest/testing use): replays met/ingest_real_met.py's real
+  HISTORICAL Meteostat archive for station 43245 (freshest real row
+  2025-10-15, NOT live) at that exact timestamp, unchanged from before.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ from met.ingest_real_met import (
     NELLORE_STATION_LON,
     load_real_met_series,
 )
+from met.live_wind import fetch_live_wind_series
 from met.weather_station import StationObservation, interpolate_met, mixing_height_m
 
 NELLORE_MET_CSV = Path(__file__).resolve().parents[1] / "data" / "raw" / "meteostat_nellore" / "43245_202508.csv"
@@ -239,12 +241,21 @@ def post_source_direction(base_url: str, device_id: str, device_key: str, payloa
 
 def process_station(
     base_url: str, station: dict, city: CityConfig, device_id: str, device_key: str,
-    as_of: datetime, lookback: int = 168,
+    as_of: datetime, lookback: int = 168, use_live_wind: bool = False,
 ) -> dict:
     """Returns a status dict describing what happened for this station.
     Never raises for an expected "nothing to do" outcome (no spike, no
     real wind for the window, receptor outside the domain) -- only lets
-    a genuinely unexpected HTTP/network error propagate."""
+    a genuinely unexpected HTTP/network error propagate.
+
+    `use_live_wind` selects the wind source: False (default, used for any
+    explicit `--as-of`) replays met/ingest_real_met.py's real HISTORICAL
+    Nellore archive for backtesting/reproducibility -- this is what
+    tests/scripts/test_source_direction_worker.py exercises and must keep
+    working unchanged. True (used for a real live run, `--as-of` omitted)
+    fetches met/live_wind.py's real, live current-conditions wind for this
+    station's own real coordinates -- see that module's docstring for the
+    disclosed model-vs-observation caveat."""
     station_id = station["station_id"]
 
     spike = fetch_spike_check(base_url, station_id, lookback)
@@ -253,14 +264,23 @@ def process_station(
     if not spike["is_spike"]:
         return {"station_id": station_id, "action": "skipped", "reason": "no spike", "spike": spike}
 
-    wind_window = load_nellore_wind_history(as_of, city.wind_history_hours)
+    if use_live_wind:
+        wind_window = fetch_live_wind_series(
+            station["location"]["lat"], station["location"]["lon"], hours_back=city.wind_history_hours,
+        )
+        wind_source_desc = "met/live_wind.py's real live current-conditions feed"
+    else:
+        wind_window = load_nellore_wind_history(as_of, city.wind_history_hours)
+        wind_source_desc = (
+            "met/ingest_real_met.py's archive (real HISTORICAL data, not a live feed -- "
+            "see its module docstring)"
+        )
     if not wind_window:
         return {
             "station_id": station_id, "action": "skipped",
             "reason": (
                 f"no real wind data covering the {city.wind_history_hours}h window ending "
-                f"{as_of.isoformat()} (met/ingest_real_met.py's archive is real HISTORICAL "
-                f"data, not a live feed -- see its module docstring)"
+                f"{as_of.isoformat()} ({wind_source_desc})"
             ),
             "spike": spike,
         }
@@ -317,10 +337,18 @@ def main() -> None:
     parser.add_argument("--city", default="live_deployment")
     parser.add_argument("--device-id", default="WORKER-SOURCE-DIRECTION")
     parser.add_argument("--device-key", required=True)
-    parser.add_argument("--as-of", default=None, help="ISO timestamp to evaluate real wind against (default: now, UTC)")
+    parser.add_argument(
+        "--as-of", default=None,
+        help=(
+            "ISO timestamp to backtest against met/ingest_real_met.py's real HISTORICAL "
+            "Nellore archive. Omit for a real live run (default): uses 'now' and fetches "
+            "met/live_wind.py's real live current-conditions wind instead."
+        ),
+    )
     parser.add_argument("--lookback", type=int, default=168)
     args = parser.parse_args()
 
+    use_live_wind = args.as_of is None
     as_of = (
         datetime.now(timezone.utc)
         if args.as_of is None
@@ -333,7 +361,10 @@ def main() -> None:
     print(f"[source-direction-worker] {len(stations)} station(s) reported, {len(valid)} valid (have device_id + location)")
 
     for station in valid:
-        result = process_station(args.base_url, station, city, args.device_id, args.device_key, as_of, args.lookback)
+        result = process_station(
+            args.base_url, station, city, args.device_id, args.device_key, as_of, args.lookback,
+            use_live_wind=use_live_wind,
+        )
         print(f"[source-direction-worker] {result}")
 
 
