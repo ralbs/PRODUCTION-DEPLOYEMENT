@@ -1,6 +1,24 @@
 services:
+  # NAME CONFIRMED, not assumed: this must match the REAL live backend real
+  # ESP32 devices report to. Checked directly (2026-09-13), not recalled
+  # from a doc: firmware/config.h's SERVER_URL hardcodes
+  # "https://aqhi-backend.onrender.com/api/telemetry", and a live HTTPS
+  # GET to https://aqhi-backend.onrender.com/health returned a real
+  # 200 {"status":"ok"} -- the exact route this repo's server.js defines,
+  # i.e. this really is the live Express instance devices are hitting.
+  # By contrast, https://aqms-backend.onrender.com (this repo's
+  # package.json/README name, and what this field used to say) is ALSO a
+  # real, currently-existing Render service, but returns a real
+  # 503 "Service Suspended" -- it exists, it's just not the one real
+  # devices use. `name` here is set to the confirmed-live one so a
+  # Blueprint sync manages/targets THAT service, not the suspended one --
+  # syncing under the old "aqms-backend" name would have adopted/woken the
+  # wrong, disconnected service. If a deliberate rename to "aqms-backend"
+  # happens later (finishing the migration), that requires reflashing
+  # every real device's SERVER_URL first per this repo's root CLAUDE.md --
+  # never the other way around.
   - type: web
-    name: aqms-backend
+    name: aqhi-backend
     runtime: node
     plan: free
     rootDir: backend
@@ -20,3 +38,42 @@ services:
         sync: false
       - key: MQTT_PASSWORD
         sync: false
+
+  # Real recurring scheduled run of scripts/source_direction_worker.py --
+  # NOT a manual/ad-hoc invocation. Runs with no --as-of, so it always takes
+  # the worker's default (live) path: met/live_wind.py's real live
+  # current-conditions wind, never the static Meteostat archive (--as-of
+  # is for backtesting only -- see that script's own --help text).
+  #
+  # BASE_URL RESOLVED (was disclosed-but-unresolved before): confirmed live
+  # via direct HTTPS check against the web service above, not assumed --
+  # see that service's own comment block. Hardcoded as a plain value, not
+  # `sync: false`, because it's a public hostname, not a secret -- nothing
+  # here needs dashboard-only entry.
+  - type: cron
+    name: source-direction-scheduler
+    runtime: python
+    # NOTE: Render does not offer a free plan for cron job services (only
+    # web services and Key Value instances get one) -- "free" here would be
+    # rejected by Render's blueprint validation. Omitting `plan` defaults to
+    # the smallest paid compute plan (0.5 CPU / 512MB), which per Render's
+    # docs carries a real minimum charge (their stated floor is $1/month for
+    # a cron job service, plus whatever that compute plan itself costs) --
+    # a real, non-hypothetical cost this file did not have before this
+    # service existed. Confirmed against Render's own docs (render.com/docs/cronjobs
+    # and /docs/blueprint-spec), not assumed.
+    rootDir: ctm-core
+    schedule: "*/15 * * * *"  # every 15 minutes, per PROMPT_FLOW_INTEGRATION.md
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      python scripts/source_direction_worker.py
+      --base-url $BASE_URL
+      --device-key $WORKER_SOURCE_DIRECTION_KEY
+    envVars:
+      - key: BASE_URL
+        value: https://aqhi-backend.onrender.com   # confirmed live 2026-09-13, see note above -- not a placeholder
+      - key: WORKER_SOURCE_DIRECTION_KEY
+        sync: false        # must match a "WORKER-SOURCE-DIRECTION:<key>" entry in the
+                            # web service's own DEVICE_KEYS -- same device_id
+                            # authenticateDevice expects (backend/middleware/auth.js),
+                            # the worker's own --device-id default
