@@ -23,6 +23,14 @@ quantified concentration maps using the CTM as trend, kriging the
 residual). Not a regulatory-grade (CMAQ-class) model — say so wherever
 attribution or inversion output is shown to a user.
 
-A green test suite proves internal consistency. It does not prove the
-model matches reality — that needs a real hindcast against observed data,
-which is explicitly still open (see PROMPT_FLOW.md Phase 10).
+A green test suite proves internal consistency. It does not by itself prove
+the model matches reality — that needed a real hindcast against observed
+data. That hindcast has now been run for real: see `PROMPT_FLOW_VALIDATION.md`
+(Phases 11-16, real Bangalore OpenAQ stations + real Meteostat wind) and its
+`PHASE15_HOLDOUT_RESULTS.md` / `PHASE16_CALIBRATION_REPORT.md` artifacts for
+the actual numbers. Read the verdict plainly, not as a pass: assimilation
+has a real, physically-confirmed effect where station geometry allows it to
+be measured, but the CTM still does not reliably beat a trivial
+diurnal-climatology baseline across most species/station combinations —
+"internally consistent" and "beats a real hindcast baseline" remain
+different, and only partially overlapping, claims.

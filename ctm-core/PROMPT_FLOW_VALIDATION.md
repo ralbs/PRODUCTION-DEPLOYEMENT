@@ -121,7 +121,17 @@ inspection, not assumed from a name match.
 
 ---
 
-## Phase 14 — Trivial baselines
+## Phase 14 — Trivial baselines (done)
+
+`persistence_baseline()` and `diurnal_climatology_baseline()` are
+implemented in `scripts/hindcast_harness.py`, matching this phase's spec
+exactly. Both are proven not to cheat by real, passing tests in
+`tests/scripts/test_hindcast_harness.py`:
+`test_persistence_baseline_error_grows_with_forecast_lead_time` and
+`test_diurnal_climatology_baseline_raises_on_zero_local_hour_overlap`
+(plus `test_diurnal_climatology_baseline_scores_correctly_on_overlapping_windows`).
+Both baselines are then used for real, in every table in
+`PHASE15_HOLDOUT_RESULTS.md` below.
 
 ```
 Before re-running any holdout, implement two baseline predictors in
@@ -156,7 +166,32 @@ silently reuse validation data in their own fitting.
 
 ---
 
-## Phase 15 — Re-run spatial + temporal holdout, properly this time
+## Phase 15 — Re-run spatial + temporal holdout, properly this time (done)
+
+Real, executed, real numbers: **`PHASE15_HOLDOUT_RESULTS.md`** (run
+2026-09-14, `py -m scripts.validate_bangalore_real`, exit 0) is the full
+comparison table this phase's acceptance criteria calls for — all four
+spatial-holdout experiments (both directions, both the original
+outside-radius pair and Phase 13's new inside-radius pair), the temporal
+holdout, the no-assimilation diagnostic control, and the tagged-tracer
+mechanistic diagnostic, all four predictors (CTM-assimilated,
+CTM-control, persistence, climatology) per species, with an explicit
+per-species verdict and an honest overall tally.
+
+**Plain verdict, stated as clearly as last round's**: across 24
+species/experiment combinations, only 3 (12.5%) beat both trivial
+baselines and 11 (45.8%) beat neither — the broad finding that CTM skill
+often does not clearly exceed a diurnal-climatology lookup has **not**
+fundamentally changed. What HAS genuinely changed: the inside-radius pair
+(new in Phase 13) finally makes OI assimilation's real effect
+measurable (a large CTM-assimilated vs CTM-control gap for no2,
+independently confirmed as real physical transport — not coincidence —
+by the tagged-tracer diagnostic), which the original outside-radius pair
+was structurally unable to show. See `PHASE15_HOLDOUT_RESULTS.md`'s own
+"Overall tally" section for the full reasoning, including a real,
+unresolved oddity (pm25 assimilation performing worse than no-assimilation
+control at the same inside-radius pair where no2 assimilation performs
+best) flagged as a candidate for further diagnosis, not smoothed over.
 
 ```
 Using Phase 12's real meteorology and Phase 13's better station coverage,
@@ -198,7 +233,20 @@ never sufficient evidence).
 
 ---
 
-## Phase 16 — Calibration (only after Phase 15, and only done correctly)
+## Phase 16 — Calibration (only after Phase 15, and only done correctly) (done)
+
+Real, executed, self-critical: **`PHASE16_CALIBRATION_REPORT.md`**. One
+trial (pm10/pm25 `background_conc`, fit on a disjoint 2019-07-17..23
+training/validation split) is reported **rejected** — real before/after
+numbers show it improved training fit but made validation RMSE and bias
+worse, an explicit, reported overfitting finding, not glossed over. A
+second trial (Hosur Road Corridor's co source rate, 2.0 -> 0.051) is
+reported **applied** — it generalizes across both the calibration week
+and, cross-checked with no re-fitting, the original Phase 15 week
+(rmse 33.25 -> 0.69, MFB +151.8% -> +24.3%). `cities/bangalore.json`'s own
+`_phase16_calibration` block mirrors this exactly, confirming the applied
+change is live in the config the simulator actually uses, not just
+described in a doc.
 
 ```
 If Phase 15 shows systematic bias (e.g. SO2's ~2.5x background mismatch
