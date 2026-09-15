@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useMemo } from "react";
 import { api } from "../api";
+import ConfidenceBadge from "./ConfidenceBadge";
 
 // Jet colormap t∈[0,1] → [r,g,b]
 function jet(t) {
@@ -208,7 +209,16 @@ export default function PlumeVisualizer({ latest }) {
             Auto-Calculated from Live Data
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <ParamItem label="Wind Speed" value={`${params.u} m/s`} sub={wind ? "From sensor" : "Default (no sensor)"} />
+            <ParamItem label="Wind Speed" value={`${params.u} m/s`} sub={
+              /* PROMPT_FLOW_UI.md Phase U2: structural measured/estimated
+                 treatment, replacing the plain "From sensor"/"Default (no
+                 sensor)" caption Phase U0 flagged as the exact anti-pattern
+                 root CLAUDE.md warns against. No cadenceMinutes -- telemetry
+                 arrival isn't on a fixed schedule the way a worker poll is,
+                 so ConfidenceBadge's "omit next-expected gracefully" path
+                 is exercised here for real. */
+              <ConfidenceBadge state={wind ? "measured" : "estimated"} timestamp={latest?.timestamp} />
+            } />
             <ParamItem label="Source Height" value={`${params.H} m`} sub="Urban average" />
             <ParamItem label="Emission Rate" value={`${params.Q} g/s`} sub={`From PM2.5: ${pm25 ?? "–"} µg/m³`} />
             <ParamItem label="Time of Day" value={params.isDaytime ? "Daytime" : "Night"} sub="Affects air stability" />
