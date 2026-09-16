@@ -16,6 +16,7 @@ import FullscreenCard    from "./components/FullscreenCard";
 import AlertToast        from "./components/AlertToast";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import HealthIntelligencePanel from "./components/HealthIntelligencePanel";
+import SourceDirectionPanel   from "./components/SourceDirectionPanel";
 
 const REFRESH_MS  = 60_000;
 const FORECAST_MS = 5 * 60_000;
@@ -32,6 +33,7 @@ const WeatherIcon  = () => I("M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z");
 const ChartIcon    = () => I("M22 12l-4 0-3 9-6-18-3 9-4 0");
 const PlumeIcon    = () => I("M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z");
 const HealthIcon   = () => I("M22 12h-4l-3 9L9 3l-3 9H2");
+const DirectionIcon = () => I("M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z");
 
 function useDataFreshness(timestamp) {
   const [age, setAge] = useState(null);
@@ -56,6 +58,9 @@ export default function App() {
   const [latest, setLatest]             = useState(null);
   const [history, setHistory]           = useState([]);
   const [forecast, setForecast]         = useState(null);
+  // { status: "idle"|"loading"|"ok"|"not_found"|"error", doc, error } --
+  // see SourceDirectionPanel.jsx for how each status renders.
+  const [sourceDirection, setSourceDirection] = useState({ status: "idle", doc: null, error: null });
   const [stationsAQI, setStationsAQI]   = useState({});
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [error, setError]               = useState(null);
@@ -109,9 +114,32 @@ export default function App() {
     try { setForecast(await api.getForecast(selected)); } catch {}
   }, [selected]);
 
+  // PROMPT_FLOW_UI.md Phase U3 -- no fixed polling interval here, unlike
+  // REFRESH_MS/FORECAST_MS above. A source-direction document is only ever
+  // produced by ctm-core/scripts/source_direction_worker.py on a real
+  // statistical spike (see PROMPT_FLOW_INTEGRATION.md's Phase I3), not on
+  // any schedule the frontend could usefully match -- polling it every
+  // REFRESH_MS would almost always just re-fetch the same document.
+  // Re-fetch on station change only; the "Direction inconclusive"/
+  // "not found" states already make a stale-looking result impossible to
+  // misread as fresh (ConfidenceBadge ages from the document's own
+  // timestamp regardless of when this fetch ran).
+  const refreshSourceDirection = useCallback(async () => {
+    if (!selected) return;
+    setSourceDirection((s) => ({ ...s, status: "loading" }));
+    try {
+      const doc = await api.getSourceDirection(selected);
+      setSourceDirection({ status: "ok", doc, error: null });
+    } catch (e) {
+      if (e.message.startsWith("404")) setSourceDirection({ status: "not_found", doc: null, error: null });
+      else setSourceDirection({ status: "error", doc: null, error: e.message });
+    }
+  }, [selected]);
+
   useEffect(() => {
     setLatest(null); setHistory([]); setForecast(null);
-    refreshStation(); refreshForecast();
+    setSourceDirection({ status: "idle", doc: null, error: null });
+    refreshStation(); refreshForecast(); refreshSourceDirection();
     const t1 = setInterval(refreshStation, REFRESH_MS);
     clearInterval(forecastTimer.current);
     forecastTimer.current = setInterval(refreshForecast, FORECAST_MS);
@@ -141,7 +169,8 @@ export default function App() {
         <div className="left-col">
           <FullscreenCard title="Station Map" icon={<MapIcon />}
             meta={`${stations.length} stations`} style={{ padding: 0 }} bodyStyle={{ height: 340 }}>
-            <MapPanel stations={stations} stationsAQI={stationsAQI} selectedStation={selected} onSelect={setSelected} />
+            <MapPanel stations={stations} stationsAQI={stationsAQI} selectedStation={selected} onSelect={setSelected}
+              sourceDirection={sourceDirection.status === "ok" ? sourceDirection.doc : null} />
           </FullscreenCard>
           <FullscreenCard title="Weather" icon={<WeatherIcon />}
             meta={dataAge ? `Updated ${dataAge}` : ""}>
@@ -167,6 +196,12 @@ export default function App() {
 
           <FullscreenCard title="24h Forecast" icon={<ForecastIcon />} meta="AI prediction">
             <ForecastPanel forecast={forecast} voiceEnabled={voiceEnabled} />
+          </FullscreenCard>
+
+          <FullscreenCard title="Source Direction" icon={<DirectionIcon />}
+            meta={sourceDirection.status === "ok" ? sourceDirection.doc.estimate_tier.replace(/_/g, " ") : ""}
+            bodyStyle={{ padding: 0 }}>
+            <SourceDirectionPanel state={sourceDirection} />
           </FullscreenCard>
         </div>
       </div>

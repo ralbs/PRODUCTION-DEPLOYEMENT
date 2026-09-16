@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import { idwInterpolate } from "../lib/idw";
 import { aqiToRgb } from "../lib/aqiColor";
+import { isInconclusive } from "../lib/sourceDirection";
 
 // IDW dispersion layer tuning — see drawHeatmap() below.
 const HEAT_CELL_PX  = 8;    // grid resolution (larger = faster, blockier)
@@ -21,14 +22,63 @@ function aqiColor(category) {
   return AQI_COLORS[category] || "#4f8ef7";
 }
 
-export default function MapPanel({ stations, stationsAQI, selectedStation, onSelect }) {
+// PROMPT_FLOW_UI.md Phase U3 -- map-overlay-vs-canvas decision, resolved
+// here rather than left open: a source-direction bearing is inherently
+// geographic (it's FROM a real station's real lat/lon, per
+// backend/models/SourceDirection.js's own comment on bearing_deg), so it
+// gets a real Leaflet overlay on the map users already orient to, not a
+// third, detached canvas widget alongside PlumeVisualizer's dispersion-grid
+// canvas (that canvas exists because a dispersion GRID has no natural home
+// on a world map at station scale -- that reasoning doesn't apply to a
+// single bearing anchored at a real marker).
+//
+// Real spherical destination-point formula (bearing + distance from a
+// lat/lon) -- matches lib/idw.js's real haversine distance rather than a
+// flat-earth approximation, same rigor standard for a real geographic
+// overlay.
+const EARTH_RADIUS_M = 6371000;
+function destinationPoint(lat, lon, bearingDeg, distanceM) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const delta = distanceM / EARTH_RADIUS_M;
+  const theta = toRad(bearingDeg);
+  const phi1 = toRad(lat);
+  const lambda1 = toRad(lon);
+  const phi2 = Math.asin(Math.sin(phi1) * Math.cos(delta) + Math.cos(phi1) * Math.sin(delta) * Math.cos(theta));
+  const lambda2 = lambda1 + Math.atan2(
+    Math.sin(theta) * Math.sin(delta) * Math.cos(phi1),
+    Math.cos(delta) - Math.sin(phi1) * Math.sin(phi2)
+  );
+  return [toDeg(phi2), toDeg(lambda2)];
+}
+
+const WEDGE_HALF_ANGLE_DEG = 18;
+// boundary_sector_fallback carries no real distance_m (see the model's own
+// comment: null there, never a fabricated number) -- this is a purely
+// visual radius so the sector renders at all, never presented as a real
+// distance (the dashed, unfilled rendering below is what actually signals
+// "no real distance", not this number).
+const FALLBACK_SECTOR_VISUAL_RADIUS_M = 6000;
+
+function buildWedgePoints(centerLat, centerLon, bearingDeg, radiusM, steps = 6) {
+  const points = [[centerLat, centerLon]];
+  for (let s = 0; s <= steps; s++) {
+    const a = bearingDeg - WEDGE_HALF_ANGLE_DEG + (2 * WEDGE_HALF_ANGLE_DEG * s) / steps;
+    points.push(destinationPoint(centerLat, centerLon, a, radiusM));
+  }
+  points.push([centerLat, centerLon]);
+  return points;
+}
+
+export default function MapPanel({ stations, stationsAQI, selectedStation, onSelect, sourceDirection }) {
   const containerRef = useRef(null);
   const mapRef      = useRef(null);
   const markersRef  = useRef({});
   const heatCanvasRef = useRef(null);
-  const dataRef       = useRef({ stations: [], stationsAQI: {} });
+  const bearingLayerRef = useRef([]);
+  const dataRef       = useRef({ stations: [], stationsAQI: {}, sourceDirection: null });
 
-  dataRef.current = { stations, stationsAQI };
+  dataRef.current = { stations, stationsAQI, sourceDirection };
 
   // Spatial dispersion around each station, IDW-interpolated in between.
   // Draws directly onto the heatmap canvas — cheap enough to redraw on every
@@ -67,6 +117,51 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
         ctx.fillRect(px, py, HEAT_CELL_PX, HEAT_CELL_PX);
       }
     }
+  }, []);
+
+  // Draws (or clears) the bearing/sector wedge for the currently loaded
+  // source-direction estimate. Vector layer, not canvas -- Leaflet
+  // reprojects polygons automatically on pan/zoom, unlike the manually
+  // repositioned IDW heatmap canvas above, so this never needs a
+  // moveend/zoomend redraw hook.
+  const drawBearingOverlay = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    bearingLayerRef.current.forEach((layer) => layer.remove());
+    bearingLayerRef.current = [];
+
+    const { stations, sourceDirection } = dataRef.current;
+
+    // Inconclusive (or absent) estimates never draw a confident-looking
+    // wedge -- same threshold src/lib/sourceDirection.js's isInconclusive()
+    // uses for SourceDirectionPanel's own "Direction inconclusive" text.
+    // A wedge with no real signal behind it is exactly the anti-pattern
+    // PROMPT_FLOW_UI.md Phase U3 was written to avoid.
+    if (isInconclusive(sourceDirection)) return;
+
+    const station = stations.find((s) => s.station_id === sourceDirection.station_id);
+    if (!station?.location?.lat) return;
+
+    const { lat, lon } = station.location;
+    const isInterior = sourceDirection.estimate_tier === "interior";
+    const radiusM = isInterior ? sourceDirection.distance_m : FALLBACK_SECTOR_VISUAL_RADIUS_M;
+    const points = buildWedgePoints(lat, lon, sourceDirection.bearing_deg, radiusM);
+
+    // Interior tier: solid filled wedge, a real bounded distance behind it.
+    // boundary_sector_fallback: outline-only + dashed, no fill -- visually,
+    // structurally distinct, never faked into looking like a real distance.
+    const wedge = L.polygon(points, {
+      pane: "bearingPane",
+      color: "#facc15",
+      weight: isInterior ? 2 : 1.5,
+      opacity: isInterior ? 0.9 : 0.55,
+      fillColor: "#facc15",
+      fillOpacity: isInterior ? Math.min(0.45, 0.15 + sourceDirection.confidence * 0.4) : 0,
+      dashArray: isInterior ? null : "6 6",
+    }).addTo(map);
+
+    bearingLayerRef.current = [wedge];
   }, []);
 
   // Resize/reposition the heatmap canvas to match the current viewport, then
@@ -116,6 +211,12 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
     const heatCanvas = L.DomUtil.create("canvas", "idw-heatmap-canvas", map.getPane("idwPane"));
     heatCanvasRef.current = heatCanvas;
 
+    // Bearing/sector overlay — above the IDW heatmap, below station markers,
+    // so the wedge never occludes a marker's click target.
+    map.createPane("bearingPane");
+    map.getPane("bearingPane").style.zIndex = 375;
+    map.getPane("bearingPane").style.pointerEvents = "none";
+
     map.on("moveend zoomend resize", resetHeatmap);
 
     mapRef.current = map;
@@ -127,6 +228,7 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
       mapRef.current = null;
       markersRef.current = {};
       heatCanvasRef.current = null;
+      bearingLayerRef.current = [];
     };
   }, [resetHeatmap]);
 
@@ -179,7 +281,8 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
     });
 
     drawHeatmap();
-  }, [stations, stationsAQI, selectedStation, onSelect, drawHeatmap]);
+    drawBearingOverlay();
+  }, [stations, stationsAQI, selectedStation, onSelect, drawHeatmap, drawBearingOverlay, sourceDirection]);
 
   return (
     <div className="map-section">

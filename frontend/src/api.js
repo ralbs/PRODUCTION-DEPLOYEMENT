@@ -22,6 +22,7 @@ export const api = {
   getHistory:    (id)                => get(`/api/telemetry/history?station_id=${encodeURIComponent(id)}&limit=2000`),
   getAqiHistory: (id)                => get(`/api/aqi/history?station_id=${encodeURIComponent(id)}&limit=2000`),
   getForecast:   (id)                => get(`/api/forecast?station_id=${encodeURIComponent(id)}`),
+  getSourceDirection: (id)           => get(`/api/source-direction/latest?station_id=${encodeURIComponent(id)}`),
   estimatePlume: (body)              => post("/api/plume/estimate", { ...body, grid: true }),
 };
 
