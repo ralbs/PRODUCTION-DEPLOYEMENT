@@ -5,7 +5,8 @@ MICS-6814 + BME680 + PMS5003 + SIM800C), built against your telemetry schema.
 
 ## Files
 - `AQMS_Firmware.ino` — all sensor reading, JSON building, calibration, and networking logic
-- `config.h` — every pin assignment, credential, and tunable constant (this is the only file you should normally need to edit)
+- `config.h` — every pin assignment and tunable constant
+- `secrets.h` — WiFi credentials + device API key. **Gitignored, never committed.** Copy `secrets.h.example` to `secrets.h` and fill in real values before building (same discipline as `backend/.env.example` → `backend/.env`).
 
 ## Libraries (Arduino Library Manager)
 - ArduinoJson (v6.x)

@@ -14,8 +14,10 @@ frontend/frontend_out.txt
 firmware/build/
 firmware/.pio/
 firmware/*.bin
+firmware/secrets.h
 
 # --- OS / editor ---
 .DS_Store
 .vscode/
 *.swp
+.vercel

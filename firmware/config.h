@@ -129,10 +129,13 @@
 #define NTP_RESYNC_MS          21600000UL  // re-sync every 6 hours
 
 // ============ WiFi Config ============
-#define WIFI_SSID         "Vinni"
-#define WIFI_PASSWORD     "vinay123"
+// WIFI_SSID / WIFI_PASSWORD / DEVICE_API_KEY live in secrets.h (gitignored,
+// never committed) -- NOT here. Copy secrets.h.example to secrets.h and
+// fill in real values before building. This file used to hardcode a real
+// WiFi password and device key directly in source; both were rotated after
+// the repo went public and the old values are retired, never valid again.
+#include "secrets.h"
 #define SERVER_URL        "https://aqhi-backend.onrender.com/api/telemetry"
-#define DEVICE_API_KEY    "AQMI-DEVICE-01"
 
 // ============ SIM800C GPRS Config ============
 #define GPRS_APN          "airtelgprs.com"
