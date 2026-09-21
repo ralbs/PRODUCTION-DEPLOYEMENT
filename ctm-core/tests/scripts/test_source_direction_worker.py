@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
+import requests
 import requests_mock as rm_module
 
 from cities.loader import load_city
@@ -26,6 +27,7 @@ from scripts.source_direction_worker import (
     fetch_spike_check,
     fetch_stations,
     load_nellore_wind_history,
+    make_idempotency_key,
     post_source_direction,
     run_adjoint_tracer,
     valid_stations,
@@ -95,6 +97,56 @@ def test_post_source_direction_sends_device_auth_headers_not_station_id():
     sent_headers = m.last_request.headers
     assert sent_headers["X-Device-Id"] == "WORKER-SOURCE-DIRECTION"
     assert sent_headers["X-Device-Key"] == "test-key"
+
+
+# ---------------------------------------------------------------------
+# make_idempotency_key() -- must be deterministic so a retried POST after
+# a read-timeout (see _build_session()'s retry-with-backoff) carries the
+# SAME key both times, letting the backend's upsert overwrite one document
+# instead of inserting a duplicate.
+# ---------------------------------------------------------------------
+
+def test_make_idempotency_key_is_deterministic_for_the_same_inputs():
+    key1 = make_idempotency_key("NEL-001", "2025-08-15T12:00:00Z")
+    key2 = make_idempotency_key("NEL-001", "2025-08-15T12:00:00Z")
+    assert key1 == key2
+
+
+def test_make_idempotency_key_differs_for_different_station_or_timestamp():
+    base = make_idempotency_key("NEL-001", "2025-08-15T12:00:00Z")
+    assert make_idempotency_key("NEL-002", "2025-08-15T12:00:00Z") != base
+    assert make_idempotency_key("NEL-001", "2025-08-15T13:00:00Z") != base
+
+
+def test_a_simulated_timeout_then_retry_sends_two_posts_with_the_same_idempotency_key():
+    """The worker itself can't observe "one document, not two" -- that
+    guarantee lives in the backend's unique-index + upsert (see
+    backend/tests/source-direction.test.js's own version of this test).
+    What the worker IS responsible for is sending the identical key on a
+    retry after a timeout -- this proves that half of the contract: a
+    dropped-response retry (simulated here as two separate calls, since
+    the read-timeout itself happens after the server already received
+    and processed the first request) posts the SAME idempotency_key both
+    times, which is what makes the backend's dedup actually apply."""
+    payload = {
+        "station_id": "NEL-001",
+        "idempotency_key": make_idempotency_key("NEL-001", "2025-08-15T12:00:00Z"),
+    }
+    with rm_module.Mocker() as m:
+        m.post(
+            "http://test-backend/api/source-direction/ingest",
+            [
+                {"exc": requests.exceptions.ReadTimeout},  # original attempt: server got it, response never arrived
+                {"json": {"status": "success", "id": "abc"}, "status_code": 201},  # the retry
+            ],
+        )
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            post_source_direction("http://test-backend", "WORKER-SOURCE-DIRECTION", "test-key", payload)
+        resp = post_source_direction("http://test-backend", "WORKER-SOURCE-DIRECTION", "test-key", payload)
+
+    assert resp.status_code == 201
+    assert len(m.request_history) == 2
+    assert m.request_history[0].json()["idempotency_key"] == m.request_history[1].json()["idempotency_key"]
 
 
 # ---------------------------------------------------------------------

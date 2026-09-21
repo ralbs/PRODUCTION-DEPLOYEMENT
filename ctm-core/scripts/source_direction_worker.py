@@ -24,6 +24,7 @@ WIND SOURCE, chosen by `--as-of`:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -262,6 +263,16 @@ def run_adjoint_tracer(
     }
 
 
+def make_idempotency_key(station_id: str, timestamp: str) -> str:
+    """Deterministic ID for one (station_id, decision timestamp) pair --
+    same inputs always produce the same key. `payload["idempotency_key"]`
+    below carries this into routes/source-direction.js, whose upsert
+    (keyed on the model's unique idempotency_key index) is what makes a
+    read-timeout retry (see _build_session()) overwrite the SAME document
+    instead of inserting a duplicate."""
+    return hashlib.sha256(f"{station_id}|{timestamp}".encode("utf-8")).hexdigest()
+
+
 def post_source_direction(base_url: str, device_id: str, device_key: str, payload: dict) -> requests.Response:
     """POST /api/source-direction/ingest -- same auth pattern as
     routes/telemetry.js's POST /: X-Device-Id/X-Device-Key checked
@@ -269,14 +280,13 @@ def post_source_direction(base_url: str, device_id: str, device_key: str, payloa
     reused verbatim server-side. station_id in `payload` is for
     grouping/storage only -- these headers are the ONLY authentication.
 
-    NOTE: the session-level retry (see _build_session()) covers this call
-    too, per the same cold-start risk as fetch_stations()/fetch_spike_check().
-    That means a read-timeout retry here CAN resend a POST whose insert
-    already succeeded server-side but was slow to respond -- the ingest
-    route has no idempotency key to de-dupe on, so this is a real, accepted
-    at-least-once tradeoff, not a false one. Worth an idempotency key on the
-    route (e.g. hash of station_id+timestamp) if duplicate SourceDirection
-    rows ever turn up."""
+    The session-level retry (see _build_session()) covers this call too,
+    per the same cold-start risk as fetch_stations()/fetch_spike_check() --
+    a read-timeout retry here CAN resend a POST whose insert already
+    succeeded server-side but was slow to respond. That's made safe by
+    `payload["idempotency_key"]` (see make_idempotency_key()): the backend
+    upserts on it, so a resend overwrites the same document rather than
+    creating a second one."""
     headers = {"X-Device-Id": device_id, "X-Device-Key": device_key}
     return _session.post(
         f"{base_url}/api/source-direction/ingest", json=payload, headers=headers, timeout=REQUEST_TIMEOUT,
@@ -354,6 +364,7 @@ def process_station(
     payload = {
         "timestamp": spike["timestamp"],
         "station_id": station_id,
+        "idempotency_key": make_idempotency_key(station_id, spike["timestamp"]),
         "trigger": {
             "actual_aqi": spike["actual_aqi"], "predicted_aqi": spike["predicted_aqi"],
             "predicted_low": spike["predicted_low"], "predicted_high": spike["predicted_high"],
