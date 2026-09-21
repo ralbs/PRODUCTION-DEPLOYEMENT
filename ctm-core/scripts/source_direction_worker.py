@@ -30,6 +30,8 @@ from pathlib import Path
 
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # allow running as a plain script
 
@@ -50,6 +52,37 @@ NELLORE_MET_CSV = Path(__file__).resolve().parents[1] / "data" / "raw" / "meteos
 
 SOURCE_DIRECTION_LABEL = "estimated upwind direction -- screening only, not confirmed source attribution"
 
+# The real backend (aqhi-backend on Render's free plan) spins down after
+# ~15min idle and can take 30-50s to cold-start back up -- a real failure
+# observed 2026-09-21 (ReadTimeoutError on fetch_stations with a 10s
+# timeout, right after this worker's own cron tick found the service
+# asleep). 60s gives a safe margin over that; the retry below covers a
+# cold-start that's still mid-boot after the first attempt.
+REQUEST_TIMEOUT = 60
+
+
+def _build_session() -> requests.Session:
+    """requests.Session with retry-with-backoff mounted for both schemes.
+    Retries on connection errors, read timeouts, and 502/503/504 (all
+    consistent with "the service was still waking up"), never on 4xx --
+    those are real application errors (bad payload, bad auth key) that a
+    retry can't fix."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=2,  # 2s, 4s, 8s between attempts
+        status_forcelist=(502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+_session = _build_session()
+
 
 def fetch_stations(base_url: str) -> list[dict]:
     """GET /api/stations -- real shape confirmed against
@@ -57,7 +90,7 @@ def fetch_stations(base_url: str) -> list[dict]:
     {station_id, device_id, last_seen, location}. device_id/location can
     be missing/None for a station with no telemetry yet -- callers MUST
     guard for that (see valid_stations()), never assume presence."""
-    resp = requests.get(f"{base_url}/api/stations", timeout=10)
+    resp = _session.get(f"{base_url}/api/stations", timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -87,10 +120,10 @@ def fetch_spike_check(base_url: str, station_id: str, lookback: int = 168) -> di
     uses) -- nothing here reimplements Holt-Winters or invents a
     threshold. Returns None on 404 (not enough data yet); raises on any
     other HTTP error."""
-    resp = requests.get(
+    resp = _session.get(
         f"{base_url}/api/forecast/spike-check",
         params={"station_id": station_id, "lookback": lookback},
-        timeout=10,
+        timeout=REQUEST_TIMEOUT,
     )
     if resp.status_code == 404:
         return None
@@ -234,9 +267,20 @@ def post_source_direction(base_url: str, device_id: str, device_key: str, payloa
     routes/telemetry.js's POST /: X-Device-Id/X-Device-Key checked
     against DEVICE_KEYS via the shared authenticateDevice middleware,
     reused verbatim server-side. station_id in `payload` is for
-    grouping/storage only -- these headers are the ONLY authentication."""
+    grouping/storage only -- these headers are the ONLY authentication.
+
+    NOTE: the session-level retry (see _build_session()) covers this call
+    too, per the same cold-start risk as fetch_stations()/fetch_spike_check().
+    That means a read-timeout retry here CAN resend a POST whose insert
+    already succeeded server-side but was slow to respond -- the ingest
+    route has no idempotency key to de-dupe on, so this is a real, accepted
+    at-least-once tradeoff, not a false one. Worth an idempotency key on the
+    route (e.g. hash of station_id+timestamp) if duplicate SourceDirection
+    rows ever turn up."""
     headers = {"X-Device-Id": device_id, "X-Device-Key": device_key}
-    return requests.post(f"{base_url}/api/source-direction/ingest", json=payload, headers=headers, timeout=10)
+    return _session.post(
+        f"{base_url}/api/source-direction/ingest", json=payload, headers=headers, timeout=REQUEST_TIMEOUT,
+    )
 
 
 def process_station(
@@ -264,17 +308,25 @@ def process_station(
     if not spike["is_spike"]:
         return {"station_id": station_id, "action": "skipped", "reason": "no spike", "spike": spike}
 
+    # wind_source_tier is a distinct confidence sub-label for the WIND
+    # itself (separate from estimate_tier, which is about the tracer's
+    # geometry) -- backend/models/SourceDirection.js's WIND_SOURCE_TIERS
+    # enum, server-enforced into a human label there so this never reads
+    # the same as a real on-site sensor reading would. See
+    # ctm-core/CLAUDE.md's confidence-treatment principle.
     if use_live_wind:
         wind_window = fetch_live_wind_series(
             station["location"]["lat"], station["location"]["lon"], hours_back=city.wind_history_hours,
         )
         wind_source_desc = "met/live_wind.py's real live current-conditions feed"
+        wind_source_tier = "live_model_nowcast"
     else:
         wind_window = load_nellore_wind_history(as_of, city.wind_history_hours)
         wind_source_desc = (
             "met/ingest_real_met.py's archive (real HISTORICAL data, not a live feed -- "
             "see its module docstring)"
         )
+        wind_source_tier = "historical_ground_station"
     if not wind_window:
         return {
             "station_id": station_id, "action": "skipped",
@@ -310,6 +362,7 @@ def process_station(
         "wind": {
             "speed_m_s": last_wind_obs.wind_speed_m_s, "dir_from_deg": last_wind_obs.wind_dir_deg,
             "station_id": last_wind_obs.station_id, "as_of": last_wind_ts.isoformat(),
+            "source_tier": wind_source_tier,
         },
         "bearing_deg": tracer_result["bearing_deg"],
         "distance_m": tracer_result["distance_m"],  # None for a boundary-fallback estimate -- never fabricated
@@ -328,6 +381,11 @@ def process_station(
         "status_code": resp.status_code,
         "spike": spike,
         "tracer": tracer_result,
+        # Surfaced at the top level (not buried inside "tracer") so it's
+        # visible wherever this result's bearing is printed/logged --
+        # never let a model-derived-wind bearing read the same as one
+        # backed by a real ground-station reading.
+        "wind_source_tier": wind_source_tier,
     }
 
 
