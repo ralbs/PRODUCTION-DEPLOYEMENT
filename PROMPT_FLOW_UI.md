@@ -345,7 +345,7 @@ of, not the only one.
 
 ---
 
-### Phase U4 — Design language audit + direction
+### Phase U4 — Design language audit + direction (done)
 
 ```
 Before touching any component: catalog every place CTM-derived data is
@@ -370,7 +370,127 @@ Get explicit sign-off on this direction before U5 starts building.
 
 **Acceptance**: a written direction doc (colors, ambient concept,
 plain-language reframing plan for the two identified "too technical"
-displays) reviewed and approved before any component changes.
+displays) reviewed and approved before any component changes -- met by
+the direction doc below, approved before U5 started.
+
+#### Direction doc (real evidence, reviewed and approved)
+
+**1. PlumeVisualizer's dispersion grid — exact colors, exact conversion
+path**
+
+Current (`PlumeVisualizer.jsx:6-13`): a hand-rolled `jet(t)` colormap --
+blue->cyan->yellow->red, `t = sqrt(concentration/max)`. Scientifically
+standard, semantically meaningless next to the rest of the dashboard.
+
+Finding: there are two different "AQI palettes" already in this
+codebase, and they disagree --
+
+| Category | `index.css` custom prop | `lib/aqiColor.js` `STOPS` (used by `MapPanel.jsx`'s real heatmap) |
+|---|---|---|
+| Good | `--good #22c55e` | `[34,197,94]` (same) |
+| Satisfactory | `--sat #a3e635` | `[132,204,22]` (different -- `#84cc16`) |
+| Moderate | `--mod #facc15` | `[234,179,8]` (different -- `#eab308`) |
+| Poor | `--poor #f97316` | `[249,115,22]` (same) |
+| Very Poor | `--vpoor #ef4444` | `[239,68,68]` (same) |
+| Severe | `--severe #9f1239` | `[153,27,27]` (different -- `#991b1b`) |
+
+Decision: use `lib/aqiColor.js`'s `aqiToRgb()` -- the continuous-
+interpolation function, not the discrete CSS pills -- because it's
+already exactly what `MapPanel.jsx`'s own IDW heatmap uses for the same
+"concentration -> gradient on a canvas" problem (`MapPanel.jsx:113`).
+This resolves the CSS-vs-JS mismatch above by picking the one already
+used for canvas gradients as authoritative for this use case; the CSS
+pills stay authoritative for discrete badges/pills, unchanged.
+
+Real gap this surfaces, must be closed in U5, not glossed over:
+`aqiToRgb(aqi)` takes an AQI index (0-500), but `PlumeVisualizer`'s grid
+holds raw µg/m³ PM2.5 concentration from the Gaussian plume math --
+feeding µg/m³ straight into `aqiToRgb` as if it were an AQI number would
+silently mis-color the grid. U5 must first convert each grid cell's
+µg/m³ through the same CPCB PM2.5 breakpoint table `backend/lib/aqi.js:
+35-42` already encodes (`[0,30]->[0,50]`, `[31,60]->[51,100]`,
+`[61,90]->[101,200]`, `[91,120]->[201,300]`, `[121,250]->[301,400]`,
+`[251,380]->[401,500]`) before calling `aqiToRgb`. That breakpoint table
+is 24hr-average-basis and the dispersion grid is instantaneous -- a
+known approximation, but the same one the backend already makes for
+real sensor readings, not a new inconsistency.
+
+Also remove: the canvas's burned-in `"Peak: 42.3 µg/m³"` / `"Stability:
+D"` `fillText` calls (`PlumeVisualizer.jsx:84-85`) -- redundant with the
+plain-language "What This Means" block (`PlumeVisualizer.jsx:229-249`)
+that already says the same thing in prose.
+
+**2. SourceDirectionPanel's bearing readout — scope boundary**
+
+Current (`SourceDirectionPanel.jsx:86-94`): `247.3°` at 26px font-mono
+as the hero element, compass point in a smaller parenthetical, raw
+`distance_m` division, raw `confidence.toFixed(2)` decimal in the
+inconclusive branch.
+
+U4 only sets direction, does not rebuild: flagged as the second catalog
+target; the actual compass/arrow + plain-distance + qualitative-
+confidence-word rebuild is Phase U6's explicit job, which must keep the
+verbatim screening-only `doc.label` disclosure untouched. Nothing here
+is built in U4.
+
+**3. Ambient wind-driven background — concrete spec, built in U5**
+
+Real data source, confirmed: `ctm-core/met/live_wind.py:83-130` --
+Open-Meteo `wind_speed_10m` (m/s) + `wind_direction_10m` (degrees),
+surfaced through the backend as the station document's
+`weather.windSpeed`/wind bearing, already flowing into the frontend
+(`PlumeVisualizer.jsx:123` already reads `weather.windSpeed`).
+
+One new full-viewport `<div className="ambient-wind-field">`, mounted
+once at the root of `App.jsx` (sibling to the main layout grid, not
+inside any `FullscreenCard`), `position: fixed; inset: 0; z-index: 0` --
+behind every card, in front of the flat `--bg-deep` body background,
+`pointer-events: none` (same non-interactive convention `MapPanel.jsx:
+210` already uses for `idwPane`). Always visible dashboard-wide,
+regardless of which station/card has focus.
+
+```css
+.ambient-wind-field {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(
+    ellipse 140% 100% at var(--wind-origin-x) var(--wind-origin-y),
+    var(--aqi-tint) 0%, transparent 60%
+  );
+  transform: rotate(var(--wind-bearing-deg));
+  opacity: var(--wind-ambient-opacity);
+  transition: transform 2s linear, opacity 1s linear;
+  animation: wind-drift var(--wind-drift-duration) linear infinite;
+}
+@keyframes wind-drift {
+  from { background-position: 0% 0%; }
+  to   { background-position: 100% 0%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-wind-field { animation: none; transition: none; }
+}
+```
+
+- `--wind-bearing-deg`: set from the selected station's live wind
+  direction -- the gradient's rotation points the way the wind blows.
+- `--wind-drift-duration`: inversely proportional to live wind speed
+  (e.g. `Math.max(8, 40 - windSpeed * 3)`s) -- calm air drifts almost
+  imperceptibly slowly, high wind drifts fast enough to notice.
+- `--aqi-tint`: the current station's AQI category color (same
+  `aqiToRgb`/category source as everywhere else) at ~6-10% opacity.
+- `--wind-ambient-opacity`: full (~1) when `wind.source_tier ===
+  "historical_ground_station"`; reduced (e.g. 0.4) when
+  `"live_model_nowcast"` -- the ambient layer obeys the same
+  confidence-treatment principle as every other CTM-derived value (root
+  `CLAUDE.md`'s ambient-data rule); it doesn't get a pass for being
+  decorative.
+- No station selected / no wind data: element renders `opacity: 0`
+  rather than a fabricated default bearing -- mirrors U1's "never fake a
+  cadence/number" rule.
+- `prefers-reduced-motion: reduce` disables the rotation/drift animation
+  and transition entirely (element still renders, statically oriented,
+  just without motion) -- verification of this moved to U5's own
+  acceptance criteria below, since U5 is where this element is actually
+  built, not U4.
 
 ---
 
@@ -390,6 +510,11 @@ Rebuild PlumeVisualizer's rendering per U4's approved direction:
   raw µg/m³ grid-cell values as the primary readout.
 - Keep ConfidenceBadge's measured/estimated/stale treatment intact on
   whatever replaces the old parameter captions.
+- Build `.ambient-wind-field` per U4's approved spec above, mounted at
+  the `App.jsx` root -- real wind bearing/speed driving rotation/drift,
+  real AQI-category tint, confidence-aware opacity, `opacity: 0` when no
+  wind data. This ships alongside the plume-view recolor since both
+  consume the same real wind + AQI-color plumbing.
 
 Real dev server, real screenshots, before/after comparison against the
 current jet-colormap version. Real axe/Lighthouse check on the new
@@ -400,7 +525,11 @@ Commit on its own.
 **Acceptance**: real screenshots showing old vs. new side by side,
 real accessibility score for the new version, confirmed no regression
 in the underlying plume calculation display (the science is unchanged,
-only its presentation).
+only its presentation); `.ambient-wind-field` respects
+`prefers-reduced-motion` -- the rotation/drift animation disabled or
+drastically simplified when set, verified with a real
+`prefers-reduced-motion` emulation in devtools (not assumed safe),
+screenshots of both the motion and reduced-motion states.
 
 ---
 
