@@ -47,6 +47,23 @@ If any route, DB write, or UI component drops this treatment to simplify
 a response shape or save screen space, that's a bug — same severity as a
 unit-conversion or sign error in the CTM itself.
 
+## The ambient-data principle — applies to all future UI work, everywhere
+
+CTM-derived data should drive ambient, persistent visual elements of the
+interface, not be confined only to isolated widget cards. Real wind
+speed and direction shaping a background element is the canonical
+example — the interface's visual identity should come from having a
+real, live physics model behind it, not from a generic dashboard
+template with data trapped in boxes.
+
+This is a standing rule for all future UI work, not scoped to any one
+phase or document (it originates from, but is not limited to, the
+phases described in `PROMPT_FLOW_UI.md`). If a new screen or component
+puts CTM-derived data in a card when an ambient/persistent treatment
+was reasonably available instead, that's a design regression worth
+raising, at the same level as dropping the confidence-treatment
+principle above.
+
 ## What's being built
 
 Directional screening + single-zone emission-rate estimation feeding the

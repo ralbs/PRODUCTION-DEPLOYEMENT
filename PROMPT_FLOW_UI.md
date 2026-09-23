@@ -328,37 +328,160 @@ state, not an error.
 ## Phase U4+ — remaining UI work, adapted to this real stack
 
 Only sequenced after U1-U3 are done and their acceptance criteria shown
-met. Adapt each to the ACTUAL stack audited in Phase U0 rather than
-generic advice:
+met. U0-U3's own established standard applies to every phase below: real
+dev server, real screenshots, before/after comparison, a real
+axe/Lighthouse check as part of that phase's own verification -- not
+deferred to a separate pass at the end. This replaces an earlier,
+looser plan for a single "U4: mobile/accessibility pass"; accessibility
+is folded into each phase's own acceptance criteria instead, which is
+better practice than a bolt-on pass after the fact.
 
-- **Mobile/responsive pass on the new components specifically.** The
-  existing breakpoints (1100px/768px/480px in index.css) are
-  desktop-first grid collapses; the new bearing overlay and
-  ConfidenceBadge need their own check at 400px width (this project's
-  stated minimum), not just inheriting whatever MapPanel already does --
-  a wedge overlay and two stacked badges inside a FullscreenCard at
-  phone width is a real, unverified layout, not the same problem as the
-  existing charts collapsing to one column.
-- **Accessibility on the badge/pill idiom generally**, since Phase U1
-  adds a THIRD semantic meaning (confidence) to a visual pattern
-  (`category-pill`/`trend-badge`) that today encodes severity/trend via
-  color alone -- confirm real contrast ratios for the new
-  measured/estimated/stale treatments specifically (don't assume the
-  existing palette's category colors, chosen for AQI severity, happen to
-  pass contrast for this different purpose), and make sure the
-  distinction isn't color-only (the existing icon/border requirement in
-  Phase U1 already helps here, but verify it, don't assume it).
-- **Extend emission-rate.js's GET /latest (confirm it exists first --
-  see the open question from this repo's own prior session about
-  whether it was added yet) into the same view or a sibling
-  FullscreenCard**, reusing Phase U1's ConfidenceBadge for its own
-  confidence fields once that route's actual response shape is
-  confirmed by reading the real model/route, not assumed to mirror
-  SourceDirection's shape.
-- **Revisit REFRESH_MS/FORECAST_MS-style fixed polling** once real
-  usage data exists on how often source-direction/emission-rate
-  documents actually change (per Phase I3's disclosed ~9-in-10
-  no-estimate finding, aggressive polling of an endpoint that rarely
-  changes is wasted load) -- an actual measurement, not a guess, should
-  set whatever interval (if any) replaces the "poll on station change
-  only" default Phase U3 ships with.
+Core direction, applying everywhere design decisions get made in these
+phases: the product's visual identity should come from having a REAL,
+LIVE PHYSICS MODEL behind it (real wind, real dispersion), not from a
+generic dashboard template — see root `CLAUDE.md`'s ambient-data
+principle, which this phase sequence is the first concrete application
+of, not the only one.
+
+---
+
+### Phase U4 — Design language audit + direction
+
+```
+Before touching any component: catalog every place CTM-derived data is
+currently shown in a "scientific instrument" style rather than a
+"decision-support" style -- specifically PlumeVisualizer's jet-colormap
+canvas grid, and any raw coordinate/bearing-degree display in
+SourceDirectionPanel. For each, propose (in writing, not code yet) a
+plain-language, AQI-category-color-consistent replacement -- reuse the
+EXISTING AQI category color tokens already in index.css (Good/
+Satisfactory/Moderate/Poor/etc), don't introduce a separate scientific
+palette.
+
+Also propose a concrete ambient design element driven by REAL live wind
+data (speed + direction, already available from met/live_wind.py's
+output surfaced through the backend) -- something persistent, not
+confined to one card, that makes the interface feel alive and
+location-specific. Sketch this in writing/CSS pseudocode, not a full
+build yet.
+
+Get explicit sign-off on this direction before U5 starts building.
+```
+
+**Acceptance**: a written direction doc (colors, ambient concept,
+plain-language reframing plan for the two identified "too technical"
+displays) reviewed and approved before any component changes.
+
+---
+
+### Phase U5 — Redesign the plume view
+
+```
+Rebuild PlumeVisualizer's rendering per U4's approved direction:
+- Replace the jet-colormap canvas grid with an AQI-category-color-based
+  soft overlay (use the same green/yellow/orange/red/etc tokens the rest
+  of the dashboard already uses for AQI category).
+- Move it onto the real Leaflet map as an overlay (consistent with how
+  SourceDirectionPanel's bearing wedge already lives on the map) rather
+  than a separate standalone canvas widget, unless U4's direction doc
+  specifically decided otherwise -- if so, state why.
+- Add a plain-language caption (e.g. "Estimated affected area based on
+  current wind and source strength") and a distance scale, replacing
+  raw µg/m³ grid-cell values as the primary readout.
+- Keep ConfidenceBadge's measured/estimated/stale treatment intact on
+  whatever replaces the old parameter captions.
+
+Real dev server, real screenshots, before/after comparison against the
+current jet-colormap version. Real axe/Lighthouse check on the new
+component specifically (color contrast on the new overlay matters here).
+Commit on its own.
+```
+
+**Acceptance**: real screenshots showing old vs. new side by side,
+real accessibility score for the new version, confirmed no regression
+in the underlying plume calculation display (the science is unchanged,
+only its presentation).
+
+---
+
+### Phase U6 — Reframe source direction in plain language
+
+```
+SourceDirectionPanel's backend/data layer is fully done -- this is pure
+presentation work. Replace raw bearing-degree + boundary_inflow_fraction
+display with: a simple compass/arrow visual, distance in plain terms
+("~4km away"), and confidence as a qualitative word (High/Moderate/
+Uncertain) backed by ConfidenceBadge's existing states rather than a raw
+percentage. Keep the "screening only, not confirmed" label exactly as-is
+per CLAUDE.md's standing rule -- reframing the presentation must not
+soften or remove that disclosure.
+
+Real dev server, real screenshots of all states (interior, boundary-
+fallback, inconclusive, no-data) in the new presentation. Commit on its
+own, separate from U5.
+```
+
+**Acceptance**: same four states from the original U3 verification,
+re-verified visually correct under the new plain-language presentation.
+
+---
+
+### Phase U7 — Trend/forecast visualization
+
+```
+Wire a real recharts line chart (already a project dependency, currently
+unused per the Phase U0 audit) to the existing Holt-Winters forecast data
+(lib/forecast.js / GET /api/forecast) -- show near-term trend visually
+rather than only as the existing trend-badge text. Reuse FullscreenCard
+as the container, matching every other dashboard section.
+
+Real dev server, real screenshot with real or realistic mock data.
+Commit on its own.
+```
+
+**Acceptance**: a real, working chart showing real forecast data,
+screenshotted and verified.
+
+---
+
+### Phase U8 — Source-composition breakdown (BLOCKED, do not start)
+
+```
+DO NOT START until cities/live_deployment.json has a real, non-empty
+emission_sources inventory -- currently empty, confirmed earlier in this
+project. TaggedTracerEngine's composition output (background %, category
+%, unexplained %) has nothing meaningful to show without real source
+data behind it. This phase is a placeholder until that dependency is
+resolved -- revisit it then, don't build a UI for data that can't exist
+yet.
+```
+
+---
+
+### Phase U9 — Emission-rate gauge (BLOCKED, do not start)
+
+```
+DO NOT START until Phase I4's emission-rate estimation is actually wired
+to a live backend route -- the CTM-side code is built and tested, but it
+was never connected to a Node endpoint (deferred during tonight's
+security work). Wire that route first, verify it end-to-end the same way
+source-direction was, THEN build this gauge against real data. Once
+unblocked, reuse Phase U1's ConfidenceBadge for its own confidence
+fields, confirming that route's actual response shape by reading the
+real model/route rather than assuming it mirrors SourceDirection's
+shape.
+```
+
+---
+
+### Phase U10 — polling cadence revisit
+
+```
+Revisit REFRESH_MS/FORECAST_MS-style fixed polling once real usage data
+exists on how often source-direction/emission-rate documents actually
+change (per Phase I3's disclosed ~9-in-10 no-estimate finding,
+aggressive polling of an endpoint that rarely changes is wasted load) --
+an actual measurement, not a guess, should set whatever interval (if
+any) replaces the "poll on station change only" default Phase U3 ships
+with.
+```
