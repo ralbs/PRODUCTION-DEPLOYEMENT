@@ -1,16 +1,7 @@
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { api } from "../api";
 import ConfidenceBadge from "./ConfidenceBadge";
-
-// Jet colormap t∈[0,1] → [r,g,b]
-function jet(t) {
-  const clamp = (v) => Math.max(0, Math.min(1, v));
-  return [
-    Math.round(clamp(1.5 - Math.abs(4 * t - 3)) * 255),
-    Math.round(clamp(1.5 - Math.abs(4 * t - 2)) * 255),
-    Math.round(clamp(1.5 - Math.abs(4 * t - 1)) * 255),
-  ];
-}
+import { pm25ToRgb } from "../lib/aqiColor";
 
 const STABILITY_LABELS = {
   A: "Very Unstable — strong daytime sun, light wind",
@@ -21,95 +12,27 @@ const STABILITY_LABELS = {
   F: "Stable — clear night, light wind",
 };
 
-function drawGrid(canvas, legendCanvas, data) {
-  const { grid, gridMeta, maxC_ugm3, cls, windDir } = data;
-  const { xSteps, ySteps, maxDist, halfY } = gridMeta;
-
-  const W = (canvas.width = canvas.offsetWidth || 620);
-  const H = (canvas.height = canvas.offsetHeight || 320);
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, W, H);
-
-  ctx.fillStyle = "#060912";
-  ctx.fillRect(0, 0, W, H);
-
-  const cellW = W / (xSteps + 1);
-  const cellH = H / (ySteps + 1);
-  const imgData = ctx.createImageData(W, H);
-
-  for (const { i, j, t } of grid) {
-    const [r, g, b] = jet(Math.sqrt(t));
-    const alpha = Math.round(t * 210 + 45);
-    const px = Math.round(i * cellW);
-    const py = Math.round(j * cellH);
-    const pw = Math.ceil(cellW) + 1;
-    const ph = Math.ceil(cellH) + 1;
-
-    for (let dy = 0; dy < ph; dy++) {
-      for (let dx = 0; dx < pw; dx++) {
-        const idx = ((py + dy) * W + (px + dx)) * 4;
-        if (idx < 0 || idx + 3 >= imgData.data.length) continue;
-        imgData.data[idx]     = r;
-        imgData.data[idx + 1] = g;
-        imgData.data[idx + 2] = b;
-        imgData.data[idx + 3] = alpha;
-      }
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
-
-  // Source marker
-  ctx.beginPath();
-  ctx.arc(3, H / 2, 6, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.strokeStyle = "#4f8ef7";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  // Labels
-  ctx.font = "10px 'JetBrains Mono', monospace";
-  ctx.fillStyle = "rgba(212,224,248,0.55)";
-  ctx.fillText("0", 12, H - 5);
-  ctx.fillText(`${(maxDist / 1000).toFixed(1)} km →`, W - 70, H - 5);
-  ctx.fillText(`Downwind (${windDir}°)`, W / 2 - 52, H - 5);
-  ctx.save();
-  ctx.translate(12, H / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText(`Crosswind ±${(halfY / 1000).toFixed(1)} km`, -55, 0);
-  ctx.restore();
-
-  ctx.fillStyle = "rgba(212,224,248,0.9)";
-  ctx.font = "11px 'JetBrains Mono', monospace";
-  ctx.fillText(`Peak: ${maxC_ugm3.toFixed(1)} µg/m³`, 12, 18);
-  ctx.fillText(`Stability: ${cls}`, 12, 33);
-
-  // Legend bar
-  if (legendCanvas) {
-    legendCanvas.width  = 18;
-    legendCanvas.height = H;
-    const lctx   = legendCanvas.getContext("2d");
-    const lImg   = lctx.createImageData(18, H);
-    for (let py = 0; py < H; py++) {
-      const t = 1 - py / H;
-      const [r, g, b] = jet(t);
-      for (let px = 0; px < 18; px++) {
-        const idx = (py * 18 + px) * 4;
-        lImg.data[idx] = r; lImg.data[idx + 1] = g; lImg.data[idx + 2] = b; lImg.data[idx + 3] = 220;
-      }
-    }
-    lctx.putImageData(lImg, 0, 0);
-    lctx.font = "9px monospace";
-    lctx.fillStyle = "rgba(212,224,248,0.65)";
-    lctx.fillText(`${maxC_ugm3.toFixed(0)}`, 0, 10);
-    lctx.fillText("0", 3, H - 3);
-  }
+// PROMPT_FLOW_UI.md Phase U5's map-move decision: the dispersion grid now
+// renders as a real geo-anchored overlay on MapPanel.jsx (see that file's
+// own comment on why), not a standalone canvas here. This component keeps
+// the plain-language explanation/params and a static legend + distance
+// scale as the primary readout, per the phase's "replacing raw µg/m³
+// grid-cell values as the primary readout" requirement -- `onResult`
+// forwards the fetched grid up to App.jsx, which is the only other
+// consumer (MapPanel) that needs the raw cell data.
+const LEGEND_STOPS = [0, 30, 60, 90, 120, 200, 300]; // µg/m³, spans the CPCB PM2.5 bands
+function legendGradientCss(maxC) {
+  const stops = LEGEND_STOPS.filter((c) => c <= Math.max(maxC, 30));
+  if (!stops.includes(maxC)) stops.push(maxC);
+  return stops
+    .map((c) => {
+      const [r, g, b] = pm25ToRgb(c);
+      return `rgb(${r},${g},${b}) ${((c / maxC) * 100).toFixed(0)}%`;
+    })
+    .join(", ");
 }
 
-export default function PlumeVisualizer({ latest }) {
-  const canvasRef = useRef(null);
-  const legendRef = useRef(null);
-
+export default function PlumeVisualizer({ latest, onResult }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
@@ -144,7 +67,7 @@ export default function PlumeVisualizer({ latest }) {
 
   // Auto-calculate whenever params change
   useEffect(() => {
-    if (!latest?.pollutants) return;
+    if (!latest?.pollutants) { setResult(null); onResult?.(null); return; }
 
     let cancelled = false;
     async function run() {
@@ -162,22 +85,17 @@ export default function PlumeVisualizer({ latest }) {
           xSteps:         80,
           ySteps:         60,
         });
-        if (!cancelled) setResult(data);
+        if (!cancelled) { setResult(data); onResult?.(data); }
       } catch (err) {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) { setError(err.message); onResult?.(null); }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     run();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onResult is a setState from App.jsx, stable per render cycle, not a real dep
   }, [latest?.pollutants, latest?.weather, params]);
-
-  // Draw whenever result changes
-  useEffect(() => {
-    if (!result?.grid || !canvasRef.current) return;
-    drawGrid(canvasRef.current, legendRef.current, result);
-  }, [result]);
 
   const pm25 = latest?.pollutants?.pm2_5;
   const wind = latest?.weather?.windSpeed;
@@ -231,7 +149,11 @@ export default function PlumeVisualizer({ latest }) {
             padding: "10px 14px", borderRadius: 10,
             background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)",
           }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>
+            {/* --text-dim on this card's bg is the same real WCAG AA
+                contrast failure (2.03:1, needs 4.5:1) as the Air Stability
+                caption below -- also pre-existing, also fixed here while
+                already in this file for the same reason. */}
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-sub)", marginBottom: 6 }}>
               What This Means
             </div>
             <p style={{ fontSize: 11, color: "var(--text-sub)", lineHeight: 1.7, margin: 0 }}>
@@ -248,9 +170,13 @@ export default function PlumeVisualizer({ latest }) {
           </div>
         )}
 
-        {/* Stability class explanation */}
+        {/* Stability class explanation. --text-dim on --bg-card is a real
+            WCAG AA contrast failure (2.19:1, needs 4.5:1) -- confirmed via
+            axe in Phase U5's verification pass, pre-existing (this div's
+            color was untouched by U5's own recolor work), fixed here since
+            it was already in the file being touched. */}
         {result && (
-          <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 10, color: "var(--text-sub)", lineHeight: 1.6 }}>
             <strong style={{ color: "var(--text-sub)" }}>Air Stability:</strong>{" "}
             {STABILITY_LABELS[result.cls] || result.cls} —{" "}
             {["A", "B"].includes(result.cls) && "pollutants disperse quickly in turbulent air."}
@@ -260,58 +186,69 @@ export default function PlumeVisualizer({ latest }) {
         )}
       </div>
 
-      {/* ── Right: Canvas visualization ── */}
-      <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      {/* ── Right: plain-language distance scale + legend (the actual
+          geo-anchored overlay now lives on the Station Map above) ── */}
+      <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-sub)" }}>
-            Pollution Dispersion Map
+            Pollution Dispersion
           </span>
           {result && (
             <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
-              {result.grid?.length ?? 0} cells computed
+              {result.grid?.length ?? 0} points on map
             </span>
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 8, flex: 1, minHeight: 280, position: "relative" }}>
-          <canvas ref={canvasRef}
-            style={{ flex: 1, minHeight: 280, background: "#060912", borderRadius: 8 }} />
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-            <span style={{ fontSize: 9, color: "var(--text-dim)" }}>{result ? "µg/m³" : ""}</span>
-            <canvas ref={legendRef} style={{ borderRadius: 4 }} />
-          </div>
-
-          {/* Overlay: loading or empty state */}
-          {(!result || loading) && (
-            <div style={{
-              position: "absolute", inset: 0, display: "flex", alignItems: "center",
-              justifyContent: "center", textAlign: "center",
-              background: "rgba(6,9,15,0.88)", borderRadius: 8,
-            }}>
-              {loading ? (
-                <div>
-                  <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 13 }}>
-                    ⟳ Computing dispersion…
-                  </span>
-                  <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6 }}>
-                    Using Pasquill-Gifford model with Briggs coefficients
-                  </div>
-                </div>
-              ) : error ? (
-                <span style={{ color: "#ef4444", fontSize: 12 }}>{error}</span>
-              ) : (
-                <span style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.7 }}>
-                  {latest?.pollutants
-                    ? "Computing from live data…"
-                    : "Select a station with sensor data to see the dispersion map"}
-                </span>
-              )}
+        {loading ? (
+          <div style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>
+            ⟳ Computing dispersion…
+            <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6, fontFamily: "inherit" }}>
+              Using Pasquill-Gifford model with Briggs coefficients
             </div>
-          )}
-        </div>
+          </div>
+        ) : error ? (
+          <span style={{ color: "#ef4444", fontSize: 12 }}>{error}</span>
+        ) : !result ? (
+          <span style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.7 }}>
+            {latest?.pollutants
+              ? "Computing from live data…"
+              : "Select a station with sensor data to see the dispersion overlay on the map above"}
+          </span>
+        ) : (
+          <>
+            <p style={{ fontSize: 11, color: "var(--text-sub)", lineHeight: 1.6, margin: 0 }}>
+              The colored overlay on the <strong style={{ color: "var(--text)" }}>Station Map</strong> above
+              shows this same estimate anchored to {selectedStationLabel(latest)}'s real position, extending{" "}
+              <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
+                {(result.gridMeta.maxDist / 1000).toFixed(1)} km
+              </strong> downwind.
+            </p>
+
+            <div>
+              <div style={{
+                height: 10, borderRadius: 6,
+                background: `linear-gradient(90deg, ${legendGradientCss(result.maxC_ugm3)})`,
+              }} />
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                <span style={{ fontSize: 9, color: "var(--text-dim)" }}>0 µg/m³</span>
+                <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                  {result.maxC_ugm3.toFixed(0)} µg/m³ (peak)
+                </span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
+}
+
+function selectedStationLabel(latest) {
+  // GET /api/telemetry/latest spreads the raw Telemetry doc, so the id lives
+  // at meta.station_id (backend/models/Telemetry.js), never a top-level field.
+  const id = latest?.meta?.station_id;
+  return id ? id.replace("KSPCB-", "") : "the station";
 }
 
 function ParamItem({ label, value, sub }) {

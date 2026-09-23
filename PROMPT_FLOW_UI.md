@@ -494,7 +494,7 @@ regardless of which station/card has focus.
 
 ---
 
-### Phase U5 — Redesign the plume view
+### Phase U5 — Redesign the plume view (done)
 
 ```
 Rebuild PlumeVisualizer's rendering per U4's approved direction:
@@ -530,6 +530,70 @@ only its presentation); `.ambient-wind-field` respects
 drastically simplified when set, verified with a real
 `prefers-reduced-motion` emulation in devtools (not assumed safe),
 screenshots of both the motion and reduced-motion states.
+
+#### Evidence (real, verified via `$B` headless browser against a temporary
+in-memory api.js mock -- no local MongoDB is reachable in this dev
+environment; mock shapes matched against the real routes, reverted after
+verification, never committed)
+
+**Map-move decision, resolved (not left open as U4's doc originally left
+it)**: `backend/routes/plume.js`'s grid coordinates are meters
+downwind/crosswind from an assumed source AT the selected station (`Q` is
+derived from that station's own PM2.5 reading) -- the same real lat/lon
+the bearing wedge already anchors to. This IS geo-referenced in practice,
+unlike the "no natural home on a world map" reasoning that applies to
+PlumeVisualizer's OLD canvas. Moved it: `MapPanel.jsx` gained a
+`plumePane` (z-index 360, between `idwPane` 350 and `bearingPane` 375)
+whose canvas projects each grid cell's real (x downwind, y crosswind)
+meters into a real lat/lon via the same spherical `destinationPoint()`
+already used for the bearing wedge (move along the wind bearing by x
+meters, then perpendicular to it by y meters), cached separately from
+screen-pixel projection so pan/zoom redraws don't repeat the trig.
+Verified: `.plume-overlay-canvas` has real non-transparent pixels
+(1000 at the initial zoom, 3600 after zooming in twice -- confirms
+`resetPlumeOverlay`'s moveend/zoomend redraw hook works and cell pixel
+size correctly scales with zoom), co-located with the station marker and
+bearing wedge in the screenshot below.
+
+`PlumeVisualizer.jsx`'s right column no longer draws a canvas at all --
+it shows the plain-language "colored overlay on the Station Map above...
+extending N km downwind" caption plus a static AQI-gradient legend bar
+(0 µg/m³ to peak), satisfying the "distance scale, replacing raw µg/m³
+grid-cell values as the primary readout" requirement without a
+standalone widget.
+
+**Recolor**: real hand-checked conversions (not the informal example this
+doc's own U4 section got wrong and is corrected here) -- 42 µg/m³ PM2.5 →
+CPCB sub-index 70 → **Satisfactory** (yellow-green), not Moderate; 75
+µg/m³ (this session's mock `latest.pollutants.pm2_5`) → sub-index ~124 →
+**Moderate** (yellow/orange). Both match `lib/aqiColor.js`'s
+`pm25ToRgb()` output exactly since that's the real conversion path now
+wired in, not a manual estimate.
+
+**Accessibility**: real axe-core 4.9.1 (CDN-injected for the scan, not a
+new dependency) scoped to the Pollution Dispersion card found ONE real
+WCAG AA failure pre-existing in `PlumeVisualizer.jsx` before this
+phase's own changes touched anything (`--text-dim` on `--bg-card`/
+`--bg-card2`, 2.19:1 and 2.03:1, both need 4.5:1) -- confirmed pre-existing
+via `git diff` showing neither flagged div was touched by U5's own edits.
+Both fixed in this same commit (changed to `--text-sub`) since the file
+was already open; re-scan after the fix: zero violations, one pass.
+`prefers-reduced-motion` verified via the real CDP `Emulation.
+setEmulatedMedia` method (not a static code read): with it emulated,
+`.ambient-wind-field`'s computed `animationName` is `"none"` and
+`transitionProperty` is `"none"`; cleared, `animationName` is
+`"wind-drift"` and `transitionProperty` is `"transform, opacity"`.
+
+**Confidence-aware opacity**, all three real states verified via computed
+style, not just code inspection: `historical_ground_station` wind →
+opacity `1`; `live_model_nowcast` → opacity `0.4`; no wind data (the
+common case -- source-direction only fires on a real statistical spike)
+→ opacity `0`, no fabricated bearing rendered.
+
+No console errors in any state tested. Old jet-colormap version
+(including the burned-in `Peak:`/`Stability:` canvas text) reproduced via
+`git stash` on just the two changed files for a true before/after,
+popped back immediately after the comparison screenshot.
 
 ---
 

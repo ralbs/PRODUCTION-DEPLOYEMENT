@@ -58,6 +58,32 @@ body {
 /* ──────────────────────────────── SHELL ── */
 .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
 
+/* ──────────────────────────────── AMBIENT WIND FIELD ──
+   PROMPT_FLOW_UI.md Phase U5 / root CLAUDE.md's ambient-data principle:
+   real live wind (bearing + speed) driving a persistent background
+   element, not confined to a card. z-index -1 (not the doc sketch's 0)
+   -- .app-shell and every card are non-positioned static content, which
+   paints ABOVE a positioned z-index:0 sibling regardless of DOM order;
+   -1 is what actually guarantees this sits behind everything. */
+.ambient-wind-field {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(
+    ellipse 140% 100% at var(--wind-origin-x, 50%) var(--wind-origin-y, 50%),
+    var(--aqi-tint, transparent) 0%, transparent 60%
+  );
+  transform: rotate(var(--wind-bearing-deg, 0deg));
+  opacity: var(--wind-ambient-opacity, 0);
+  transition: transform 2s linear, opacity 1s linear;
+  animation: wind-drift var(--wind-drift-duration, 30s) linear infinite;
+}
+@keyframes wind-drift {
+  from { background-position: 0% 0%; }
+  to   { background-position: 100% 0%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-wind-field { animation: none; transition: none; }
+}
+
 /* ──────────────────────────────── HEADER ── */
 .header {
   position: sticky; top: 0; z-index: 200;

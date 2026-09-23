@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { api } from "./api";
+import { aqiToRgb } from "./lib/aqiColor";
 
 import Header            from "./components/Header";
 import HeroSection       from "./components/HeroSection";
@@ -61,6 +62,12 @@ export default function App() {
   // { status: "idle"|"loading"|"ok"|"not_found"|"error", doc, error } --
   // see SourceDirectionPanel.jsx for how each status renders.
   const [sourceDirection, setSourceDirection] = useState({ status: "idle", doc: null, error: null });
+  // PROMPT_FLOW_UI.md Phase U5's map-move: PlumeVisualizer still owns
+  // fetching (it already derives Q/H/windDir from `latest`), but the raw
+  // result is lifted here so MapPanel can draw the same real grid as a geo
+  // overlay -- same lift-and-share pattern already used for sourceDirection
+  // above (SourceDirectionPanel + MapPanel's bearing wedge).
+  const [plumeResult, setPlumeResult]   = useState(null);
   const [stationsAQI, setStationsAQI]   = useState({});
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [error, setError]               = useState(null);
@@ -149,8 +156,33 @@ export default function App() {
   const stationName = selected?.replace("KSPCB-", "") ?? "–";
   const currentCat  = latest?.aqi?.category;
 
+  // PROMPT_FLOW_UI.md Phase U5's ambient wind field. The only real, live
+  // wind (speed + direction, from ctm-core/met/live_wind.py) that reaches
+  // the frontend end-to-end today rides on the SourceDirection document's
+  // `wind` sub-object -- a general per-station telemetry.weather.windSpeed
+  // field doesn't exist on the real schema (backend/models/Telemetry.js).
+  // That document only exists when the worker's real statistical-spike
+  // trigger fires (~14% of hours per PROMPT_FLOW_INTEGRATION.md's Phase
+  // I3 finding), so `hasWind` is false, and this renders at opacity 0,
+  // most of the time -- expected, not a bug; never fabricate a bearing to
+  // fill that gap.
+  const ambientStyle = useMemo(() => {
+    const wind = sourceDirection.status === "ok" ? sourceDirection.doc?.wind : null;
+    const hasWind = wind?.speed_m_s != null && wind?.dir_from_deg != null;
+    const [r, g, b] = aqiToRgb(latest?.aqi?.aqi) || [0, 0, 0];
+    return {
+      "--wind-bearing-deg": `${wind?.dir_from_deg ?? 0}deg`,
+      "--wind-drift-duration": `${Math.max(8, 40 - (wind?.speed_m_s ?? 0) * 3)}s`,
+      "--aqi-tint": `rgba(${r}, ${g}, ${b}, 0.08)`,
+      "--wind-ambient-opacity": !hasWind
+        ? 0
+        : wind.source_tier === "historical_ground_station" ? 1 : 0.4,
+    };
+  }, [sourceDirection, latest?.aqi?.aqi]);
+
   return (
     <div className="app-shell">
+      <div className="ambient-wind-field" style={ambientStyle} />
       <KeyboardShortcuts stations={stations} selected={selected} onSelect={setSelected}
         onVoiceToggle={() => setVoiceEnabled((v) => !v)} onRefresh={refreshStation} />
       <AlertToast aqi={latest?.aqi} station={selected} />
@@ -170,7 +202,8 @@ export default function App() {
           <FullscreenCard title="Station Map" icon={<MapIcon />}
             meta={`${stations.length} stations`} style={{ padding: 0 }} bodyStyle={{ height: 340 }}>
             <MapPanel stations={stations} stationsAQI={stationsAQI} selectedStation={selected} onSelect={setSelected}
-              sourceDirection={sourceDirection.status === "ok" ? sourceDirection.doc : null} />
+              sourceDirection={sourceDirection.status === "ok" ? sourceDirection.doc : null}
+              plumeResult={plumeResult} />
           </FullscreenCard>
           <FullscreenCard title="Weather" icon={<WeatherIcon />}
             meta={dataAge ? `Updated ${dataAge}` : ""}>
@@ -228,7 +261,7 @@ export default function App() {
       <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
           meta="Auto-calculated from live data" style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
-          <PlumeVisualizer latest={latest} />
+          <PlumeVisualizer latest={latest} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
     </div>

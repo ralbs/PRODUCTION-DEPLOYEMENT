@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import { idwInterpolate } from "../lib/idw";
-import { aqiToRgb } from "../lib/aqiColor";
+import { aqiToRgb, pm25ToRgb } from "../lib/aqiColor";
 import { isInconclusive } from "../lib/sourceDirection";
 
 // IDW dispersion layer tuning — see drawHeatmap() below.
@@ -70,15 +70,17 @@ function buildWedgePoints(centerLat, centerLon, bearingDeg, radiusM, steps = 6) 
   return points;
 }
 
-export default function MapPanel({ stations, stationsAQI, selectedStation, onSelect, sourceDirection }) {
+export default function MapPanel({ stations, stationsAQI, selectedStation, onSelect, sourceDirection, plumeResult }) {
   const containerRef = useRef(null);
   const mapRef      = useRef(null);
   const markersRef  = useRef({});
   const heatCanvasRef = useRef(null);
   const bearingLayerRef = useRef([]);
-  const dataRef       = useRef({ stations: [], stationsAQI: {}, sourceDirection: null });
+  const plumeCanvasRef = useRef(null);
+  const plumeGeoCellsRef = useRef([]);
+  const dataRef       = useRef({ stations: [], stationsAQI: {}, sourceDirection: null, plumeResult: null, selectedStation: null });
 
-  dataRef.current = { stations, stationsAQI, sourceDirection };
+  dataRef.current = { stations, stationsAQI, sourceDirection, plumeResult, selectedStation };
 
   // Spatial dispersion around each station, IDW-interpolated in between.
   // Draws directly onto the heatmap canvas — cheap enough to redraw on every
@@ -164,6 +166,107 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
     bearingLayerRef.current = [wedge];
   }, []);
 
+  // PROMPT_FLOW_UI.md Phase U5's map-move decision: PlumeVisualizer.jsx's
+  // dispersion grid used to render on its own detached <canvas>. Unlike
+  // that earlier reasoning (a grid has no natural home on a world map),
+  // this grid IS geo-anchored in practice -- backend/routes/plume.js's own
+  // x/y coordinates are meters downwind/crosswind from an assumed source
+  // AT the selected station (Q is derived from that station's own PM2.5
+  // reading), the same real lat/lon the bearing wedge above already
+  // anchors to. Real spherical projection (destinationPoint, defined
+  // above) converts each cell's (x downwind, y crosswind) into a real
+  // lat/lon: first move along the wind bearing by x meters, then
+  // perpendicular to it by y meters.
+  //
+  // Cached separately from pixel projection (buildPlumeGeoCells vs.
+  // drawPlumeOverlay) because the real lat/lon per cell only changes when
+  // the grid DATA changes (a new plume estimate or a new station), while
+  // the screen pixel for a given lat/lon changes on every pan/zoom --
+  // recomputing destinationPoint's trig for every cell on every moveend
+  // would be wasted work the IDW heatmap's per-pixel approach doesn't pay
+  // (it has no cacheable geo step at all, everything is screen-space).
+  const buildPlumeGeoCells = useCallback(() => {
+    const { plumeResult, stations, selectedStation } = dataRef.current;
+    if (!plumeResult?.grid?.length || !plumeResult?.gridMeta) {
+      plumeGeoCellsRef.current = [];
+      return;
+    }
+    const station = stations.find((s) => s.station_id === selectedStation);
+    if (!station?.location?.lat) {
+      plumeGeoCellsRef.current = [];
+      return;
+    }
+
+    const { lat, lon } = station.location;
+    const { windDir, maxC_ugm3, grid } = plumeResult;
+    const { xSteps, ySteps, maxDist, halfY } = plumeResult.gridMeta;
+    const dx = maxDist / xSteps;
+    const dy = (2 * halfY) / ySteps;
+
+    plumeGeoCellsRef.current = grid.map(({ i, j, t }) => {
+      const xM = i * dx;         // downwind distance from the station
+      const yM = -halfY + j * dy; // crosswind offset, signed
+      const [downLat, downLon] = destinationPoint(lat, lon, windDir, xM);
+      const [cellLat, cellLon] = destinationPoint(downLat, downLon, windDir + 90, yM);
+      const [r, g, b] = pm25ToRgb(t * maxC_ugm3);
+      return { lat: cellLat, lon: cellLon, r, g, b, alpha: Math.min(0.85, t * 0.8 + 0.05) };
+    });
+  }, []);
+
+  // Re-projects the cached geo cells (real lat/lon, computed once per data
+  // change above) to the current screen -- cheap, safe to call on every
+  // pan/zoom, same division of labour as resetHeatmap/drawHeatmap below.
+  const drawPlumeOverlay = useCallback(() => {
+    const map = mapRef.current;
+    const canvas = plumeCanvasRef.current;
+    if (!map || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const cells = plumeGeoCellsRef.current;
+    if (!cells.length) return;
+
+    // One extra projection to size the cell footprint in pixels at the
+    // current zoom -- cells are a fixed real-world size (dx x dy meters),
+    // not a fixed pixel size, so this has to be recomputed per redraw.
+    const { plumeResult, stations, selectedStation } = dataRef.current;
+    const station = stations.find((s) => s.station_id === selectedStation);
+    if (!station?.location?.lat) return;
+    const { lat, lon } = station.location;
+    const { windDir } = plumeResult;
+    const { xSteps, maxDist } = plumeResult.gridMeta;
+    const dx = maxDist / xSteps;
+    const p0 = map.latLngToContainerPoint([lat, lon]);
+    const [refLat, refLon] = destinationPoint(lat, lon, windDir, dx);
+    const pRef = map.latLngToContainerPoint([refLat, refLon]);
+    const cellPx = Math.max(2, Math.hypot(pRef.x - p0.x, pRef.y - p0.y) + 1);
+
+    for (const cell of cells) {
+      const p = map.latLngToContainerPoint([cell.lat, cell.lon]);
+      if (p.x < -cellPx || p.x > canvas.width + cellPx || p.y < -cellPx || p.y > canvas.height + cellPx) continue;
+      ctx.fillStyle = `rgba(${cell.r},${cell.g},${cell.b},${cell.alpha.toFixed(3)})`;
+      ctx.fillRect(p.x - cellPx / 2, p.y - cellPx / 2, cellPx, cellPx);
+    }
+  }, []);
+
+  // Resize/reposition the plume canvas to match the current viewport, then
+  // redraw -- same pattern as resetHeatmap below (panes are children of
+  // Leaflet's transformed map root, so the canvas has to be re-pinned to
+  // the container's top-left on every move/zoom).
+  const resetPlumeOverlay = useCallback(() => {
+    const map = mapRef.current;
+    const canvas = plumeCanvasRef.current;
+    if (!map || !canvas) return;
+
+    const size = map.getSize();
+    canvas.width = size.x;
+    canvas.height = size.y;
+    L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+
+    drawPlumeOverlay();
+  }, [drawPlumeOverlay]);
+
   // Resize/reposition the heatmap canvas to match the current viewport, then
   // redraw. Panes are children of Leaflet's transformed map root, so the
   // canvas has to be re-pinned to the container's top-left on every
@@ -211,6 +314,16 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
     const heatCanvas = L.DomUtil.create("canvas", "idw-heatmap-canvas", map.getPane("idwPane"));
     heatCanvasRef.current = heatCanvas;
 
+    // Plume dispersion overlay — above the IDW heatmap (a per-station AQI
+    // glow), below the bearing wedge and station markers. See
+    // buildPlumeGeoCells's comment above for why this moved here from
+    // PlumeVisualizer.jsx's old standalone canvas.
+    map.createPane("plumePane");
+    map.getPane("plumePane").style.zIndex = 360;
+    map.getPane("plumePane").style.pointerEvents = "none";
+    const plumeCanvas = L.DomUtil.create("canvas", "plume-overlay-canvas", map.getPane("plumePane"));
+    plumeCanvasRef.current = plumeCanvas;
+
     // Bearing/sector overlay — above the IDW heatmap, below station markers,
     // so the wedge never occludes a marker's click target.
     map.createPane("bearingPane");
@@ -218,19 +331,24 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
     map.getPane("bearingPane").style.pointerEvents = "none";
 
     map.on("moveend zoomend resize", resetHeatmap);
+    map.on("moveend zoomend resize", resetPlumeOverlay);
 
     mapRef.current = map;
     resetHeatmap();
+    resetPlumeOverlay();
 
     return () => {
       map.off("moveend zoomend resize", resetHeatmap);
+      map.off("moveend zoomend resize", resetPlumeOverlay);
       map.remove();
       mapRef.current = null;
       markersRef.current = {};
       heatCanvasRef.current = null;
       bearingLayerRef.current = [];
+      plumeCanvasRef.current = null;
+      plumeGeoCellsRef.current = [];
     };
-  }, [resetHeatmap]);
+  }, [resetHeatmap, resetPlumeOverlay]);
 
   // Redraw markers whenever data changes
   useEffect(() => {
@@ -282,7 +400,10 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
 
     drawHeatmap();
     drawBearingOverlay();
-  }, [stations, stationsAQI, selectedStation, onSelect, drawHeatmap, drawBearingOverlay, sourceDirection]);
+    buildPlumeGeoCells();
+    drawPlumeOverlay();
+  }, [stations, stationsAQI, selectedStation, onSelect, drawHeatmap, drawBearingOverlay, sourceDirection,
+      plumeResult, buildPlumeGeoCells, drawPlumeOverlay]);
 
   return (
     <div className="map-section">
