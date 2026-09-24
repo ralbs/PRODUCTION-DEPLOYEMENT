@@ -73,6 +73,19 @@ export default function App() {
   const [error, setError]               = useState(null);
   const forecastTimer = useRef(null);
   const mainRef       = useRef(null);
+  // Stale-response guard for refreshStation/refreshForecast/
+  // refreshSourceDirection below: none of the three cancel their in-flight
+  // fetch when `selected` changes, so a slow response for a station the
+  // user has since switched away from would otherwise commit its data
+  // under the NEW station's name -- confirmed as a real bug (not
+  // hypothetical): switching while a fetch is genuinely in flight let a
+  // stale response silently overwrite `latest` for up to REFRESH_MS
+  // (60s) before the next periodic refresh happened to correct it.
+  // Read/written like MapPanel.jsx's dataRef -- assigned every render,
+  // not via a useEffect, so it's always current by the time an async
+  // callback checks it.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   const dataAge = useDataFreshness(latest?.timestamp);
 
@@ -100,25 +113,38 @@ export default function App() {
 
   const refreshStation = useCallback(async () => {
     if (!selected) return;
+    const requestedFor = selected;
     try {
       const [lat, hist] = await Promise.all([api.getLatest(selected), api.getHistory(selected)]);
+      // Stale-response guard: the user may have switched stations while
+      // this was in flight -- see selectedRef's comment above. Discard
+      // rather than commit a slower station's data under a newer one's name.
+      if (selectedRef.current !== requestedFor) return;
       setLatest(lat);
       setHistory([...hist].reverse());
       setStationsAQI((prev) => ({
         ...prev,
-        [selected]: {
+        [requestedFor]: {
           aqi: lat.aqi?.aqi, category: lat.aqi?.category,
           dominant_pollutant: lat.aqi?.dominant_pollutant,
           pm2_5: lat.pollutants?.pm2_5, timestamp: lat.timestamp,
         },
       }));
       setError(null);
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      if (selectedRef.current !== requestedFor) return;
+      setError(e.message);
+    }
   }, [selected]);
 
   const refreshForecast = useCallback(async () => {
     if (!selected) return;
-    try { setForecast(await api.getForecast(selected)); } catch {}
+    const requestedFor = selected;
+    try {
+      const data = await api.getForecast(selected);
+      if (selectedRef.current !== requestedFor) return;
+      setForecast(data);
+    } catch { /* stale or real failure either way -- no state to roll back */ }
   }, [selected]);
 
   // PROMPT_FLOW_UI.md Phase U3 -- no fixed polling interval here, unlike
@@ -133,11 +159,14 @@ export default function App() {
   // timestamp regardless of when this fetch ran).
   const refreshSourceDirection = useCallback(async () => {
     if (!selected) return;
+    const requestedFor = selected;
     setSourceDirection((s) => ({ ...s, status: "loading" }));
     try {
       const doc = await api.getSourceDirection(selected);
+      if (selectedRef.current !== requestedFor) return;
       setSourceDirection({ status: "ok", doc, error: null });
     } catch (e) {
+      if (selectedRef.current !== requestedFor) return;
       if (e.message.startsWith("404")) setSourceDirection({ status: "not_found", doc: null, error: null });
       else setSourceDirection({ status: "error", doc: null, error: e.message });
     }

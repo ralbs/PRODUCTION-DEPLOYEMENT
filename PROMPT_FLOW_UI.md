@@ -626,6 +626,42 @@ then rendered correctly at the new station's real position once the
 fetch resolved (confirmed both via direct prop inspection and, after
 panning the map into view, a real non-empty canvas at the right spot).
 
+**Follow-up: the plumeResult fix above was checked against the wrong
+failure window.** A direct question forced re-verification: that fix and
+its test only covered switching stations AFTER the old station's fetch
+had fully settled -- a clean handoff. The real failure window is
+switching WHILE a fetch for the previous station is still genuinely in
+flight. Re-tested properly: station A given an artificial 4s fetch
+delay, switched to station B at ~300ms (well before A's fetch resolves),
+verified against a **production build** (`vite build` + `vite preview`,
+not the dev server) to rule out React StrictMode's dev-only double-effect
+invocation as a confound, with real timestamped trace logs plus direct
+React state inspection (walking the fiber tree, not inferring from
+rendered output).
+
+Result: this reproduced a real, pre-existing bug -- NOT fixed by the
+plumeResult change above, and predating this phase entirely. `latest`
+itself has zero guard against a stale response: `refreshStation` (and
+identically-shaped `refreshForecast`/`refreshSourceDirection`) commit
+whatever they fetch unconditionally, with no check that `selected`
+hasn't since changed. Confirmed via direct fiber inspection: ~4s after
+switching to B, `latest.meta.station_id` silently reverted to `"KSPCB-A"`
+(`pm2_5=75`, station A's stale value) while `selected` still correctly
+read `"KSPCB-B"` -- a real, user-visible "station B" screen silently
+showing station A's numbers. It "corrected" itself ~60s later only by
+coincidence: `REFRESH_MS`'s pre-existing periodic timer happened to
+re-fetch the (by-then-still) selected station and overwrite the
+corruption. Absent that lucky timing, a real user could see the wrong
+station's data for up to a minute.
+
+Fixed by adding a `selectedRef` (assigned every render, same pattern as
+`MapPanel.jsx`'s `dataRef`) that all three fetchers check against the
+station they were called for before committing state, discarding the
+response if the user has since switched away -- `App.jsx`. Re-ran the
+identical adversarial sequence against a fresh production build after
+the fix: `latest.meta.station_id` stayed `"KSPCB-B"` (`pm2_5=20`,
+correct) straight through A's stale resolution, no console errors.
+
 ---
 
 ### Phase U6 — Reframe source direction in plain language
