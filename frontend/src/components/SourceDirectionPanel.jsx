@@ -121,13 +121,24 @@ export default function SourceDirectionPanel({ state }) {
             {/* --text-dim here is the same pre-existing WCAG AA contrast
                 failure (2.0:1, needs 4.5:1) the original raw-percentage
                 version of this text already had -- fixed while rewriting
-                this block for Phase U6. */}
+                this block for Phase U6.
+
+                Wording corrected after a real re-sweep of
+                PROMPT_FLOW_INTEGRATION.md's Phase I3 data (done verifying
+                this session's confidenceWord() thresholds): the original
+                text here claimed this was "a real, expected outcome ...
+                not a bug", implying it's common. A fresh sweep of the
+                same real 744-hour archive against the CURRENT code (the
+                doc's own table was stale, written before commit e1fbe37
+                added the boundary-fallback path) found confidence<=0.1
+                only 1.7% of the time now, not the dominant case -- so
+                this branch is genuinely uncommon, and the copy must not
+                claim otherwise just because it once was. */}
             <div style={{ fontSize: 11, color: "var(--text-sub)", marginTop: 3, lineHeight: 1.6 }}>
               Confidence: <strong style={{ color: "var(--text-sub)" }}>Uncertain</strong> -- the simulated
-              plume mostly exited the edge of the modeled area rather than pointing to a clear source. This
-              is a real, expected outcome at the currently shipped domain size (see
-              PROMPT_FLOW_INTEGRATION.md's Phase I3 saturation sweep), not a bug -- no direction is shown
-              because none would be trustworthy.
+              plume mostly exited the edge of the modeled area rather than pointing to a clear source,
+              leaving too little signal to trust a direction (see PROMPT_FLOW_INTEGRATION.md's Phase I3
+              finding) -- not a bug, but not the common case either.
             </div>
           </div>
         </div>
