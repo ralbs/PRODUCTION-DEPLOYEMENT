@@ -764,6 +764,25 @@ systemic `--text-dim` issue already found and fixed three times in
 four states individually after fixing: zero violations in all four, not
 inferred from one representative case. No console errors in any state.
 
+**Threshold sanity check, done, not skipped**: `confidenceWord()`'s
+High(>0.6)/Moderate(>0.3)/Uncertain bands were picked by feel, not from
+data -- caught by a direct question. Checked against real historical
+confidence values by re-running the exact real functions
+(`load_nellore_wind_history`, `run_adjoint_tracer`) across the same real
+744-hour Nellore archive PROMPT_FLOW_INTEGRATION.md's Phase I3 used. This
+surfaced that Phase I3's own disclosed table was itself stale (see
+`6f4416f`'s correction) -- the REAL current distribution (731 hours with
+confidence > 0.1) is: High 692 (94.7%), Moderate 32 (4.4%), Uncertain-
+but-shown 7 (1.0%). `Moderate` is a real, non-empty band (not dead code),
+just a genuine minority -- a user will see "High" almost every time a
+bearing is shown at all. Decision: keep 0.6/0.3 as-is -- this was a
+sanity check to rule out an empty/unreachable band, not a request to
+optimize the split, and the real data doesn't rule the bands out.
+Also triggered two follow-up fixes for stale-statistic-driven copy this
+phase had written: `6f4416f` (the doc itself) and `4187c8d`
+(SourceDirectionPanel.jsx's inconclusive-state text, which had cited the
+stale figure to claim commonality it doesn't have).
+
 ---
 
 ### Phase U7 — Trend/forecast visualization
