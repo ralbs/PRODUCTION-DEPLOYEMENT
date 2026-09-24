@@ -146,6 +146,15 @@ export default function App() {
   useEffect(() => {
     setLatest(null); setHistory([]); setForecast(null);
     setSourceDirection({ status: "idle", doc: null, error: null });
+    // Same guard as sourceDirection above, and for the same reason:
+    // MapPanel's buildPlumeGeoCells anchors plumeResult's grid to
+    // `selectedStation`'s real coordinates, not to whichever station the
+    // grid data actually came from -- without this, the OLD station's
+    // stale dispersion estimate would render anchored at the NEW
+    // station's real position for the gap between selecting it and
+    // PlumeVisualizer's re-fetch resolving. Found during Phase U5's
+    // coordinate-alignment spot-check, not from the original U5 build.
+    setPlumeResult(null);
     refreshStation(); refreshForecast(); refreshSourceDirection();
     const t1 = setInterval(refreshStation, REFRESH_MS);
     clearInterval(forecastTimer.current);

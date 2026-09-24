@@ -595,6 +595,37 @@ No console errors in any state tested. Old jet-colormap version
 `git stash` on just the two changed files for a true before/after,
 popped back immediately after the comparison screenshot.
 
+**Coordinate-alignment spot-check** (prompted by a direct question on
+whether the plume overlay and bearing wedge actually align on screen, not
+just that they call the same projection function): verified by walking
+the live React fiber tree to pull the real `L.Map` instance, the bearing
+wedge's actual `L.Polygon`, and the plume's cached geo cells directly out
+of running component state -- not by re-deriving from source. The wedge's
+apex `getLatLngs()[0][0]` matched the mocked station coordinate exactly
+(0m, 0px offset from the marker). The plume grid's nearest real cell
+(excluding `i=0`, which the real backend always skips -- see
+`routes/plume.js`) sat exactly 100.0m from the station, matching
+`maxDist/xSteps` (8000/80) precisely, and projected to 3px from the
+marker on screen at zoom 12 -- the expected small offset for a 100m
+real-world distance, not a misalignment.
+
+That same check surfaced a real bug this phase introduced: `MapPanel.jsx`
+anchors `plumeResult`'s grid to `selectedStation` (the currently selected
+station), while the pre-existing bearing wedge anchors to
+`sourceDirection.station_id`, and (unlike `sourceDirection`, which
+`App.jsx` already reset to `idle` synchronously on station change) the
+lifted `plumeResult` state had no equivalent reset -- so between
+selecting a new station and its plume re-fetch resolving, the map would
+render the OLD station's stale dispersion estimate anchored at the NEW
+station's real coordinates. Fixed by adding `setPlumeResult(null)` to the
+same station-change effect that already resets `latest`/`sourceDirection`
+(`App.jsx`). Verified with an artificially delayed two-station mock: the
+overlay showed 0 rendered pixels in the gap immediately after switching
+(previously would have shown station A's plume at station B's location),
+then rendered correctly at the new station's real position once the
+fetch resolved (confirmed both via direct prop inspection and, after
+panning the map into view, a real non-empty canvas at the right spot).
+
 ---
 
 ### Phase U6 — Reframe source direction in plain language
