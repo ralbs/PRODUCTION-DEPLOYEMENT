@@ -681,7 +681,7 @@ from the shared code shape.
 
 ---
 
-### Phase U6 — Reframe source direction in plain language
+### Phase U6 — Reframe source direction in plain language (done)
 
 ```
 SourceDirectionPanel's backend/data layer is fully done -- this is pure
@@ -699,7 +699,70 @@ own, separate from U5.
 ```
 
 **Acceptance**: same four states from the original U3 verification,
-re-verified visually correct under the new plain-language presentation.
+re-verified visually correct under the new plain-language presentation --
+met, evidence below.
+
+#### Evidence (real, verified via `$B` headless browser against a
+temporary api.js mock -- no local MongoDB reachable in this environment;
+mock reverted after verification, never committed)
+
+**Compass/arrow**: new `CompassArrow` SVG replaces the old 26px raw
+`247.3°` hero number -- solid filled arrowhead for `estimate_tier ===
+"interior"`, dashed line + hollow arrowhead for
+`"boundary_sector_fallback"`, carrying Phase U3's map-wedge structural
+distinction (real distance behind it vs. not) into this panel's own
+visual rather than losing it when the presentation changed. `bearing_deg`
+drives the arrow's rotation directly (SVG `rotate()` is clockwise in
+screen space, same direction as a compass bearing, confirmed no sign
+flip needed). Compass point (e.g. "WSW") is now the primary readout; the
+raw degree value is demoted to small secondary text, not removed.
+
+**Distance**: `~4 km away` (interior tier, real `distance_m`) replaces
+`~4.2 km upwind`; `"Direction only -- no distance estimate available"`
+(boundary-fallback tier) replaces the old `distance not available --
+compass sector only`.
+
+**Confidence**: new `confidenceWord()` bands `doc.confidence` into
+High (>0.6) / Moderate (>0.3) / Uncertain (below, but this branch is
+only reached above `isInconclusive()`'s own 0.1 cutoff) -- verified
+against mocked confidences 0.71 -> "High", 0.42 -> "Moderate". The
+inconclusive branch's raw `confidence 0.07 (...)... 23% boundary
+inflow` sentence is replaced with `Confidence: Uncertain` plus a
+plain-language explanation, keeping the real citation
+(`PROMPT_FLOW_INTEGRATION.md`'s Phase I3 saturation sweep) rather than
+just deleting the substance along with the raw numbers.
+
+**Disclosure label untouched**: `doc.label` (the server-enforced
+`SOURCE_DIRECTION_LABEL`) renders byte-for-byte identical to before in
+every state screenshotted -- confirmed by direct comparison, not just
+by not having edited that line.
+
+**All four states, screenshotted for real** (mocked `getSourceDirection`
+responses, `$B` headless browser, real DOM, real CSS):
+- `interior` (confidence 0.71): compass -> WSW, solid arrow, `~4 km
+  away`, `247°`, `Confidence: High`, both badges green/measured.
+- `boundary_sector_fallback` (confidence 0.42, nowcast wind): compass ->
+  SE, dashed arrow, `Direction only -- no distance estimate available`,
+  `135°`, `Confidence: Moderate`, both badges dashed/estimated.
+- `inconclusive` (confidence 0.04, below the 0.1 cutoff): no arrow shown
+  (correct -- `isInconclusive()` still gates this entirely), `Direction
+  inconclusive` / `Confidence: Uncertain` with the plain-language
+  boundary-saturation explanation.
+- `not_found`: unchanged empty state (this branch wasn't touched).
+
+**Accessibility, all four states individually, not just one**: real
+axe-core 4.9.1 scoped to the card found FIVE real WCAG AA color-contrast
+failures across this file (`--text-dim` on dark card backgrounds,
+~2.0-2.19:1 where 4.5:1 is required) -- two in newly-added elements
+(the demoted degree readout; none from the compass SVG itself, which
+has no text-contrast-checkable content), three in code carried over
+unchanged from before this phase (the `idle`/`loading` state, the
+`not_found` state, and the badge-timestamp caveat line -- the same
+systemic `--text-dim` issue already found and fixed three times in
+`PlumeVisualizer.jsx` during Phase U5). All five fixed (changed to
+`--text-sub`) since the file was already open; re-scanned each of the
+four states individually after fixing: zero violations in all four, not
+inferred from one representative case. No console errors in any state.
 
 ---
 
