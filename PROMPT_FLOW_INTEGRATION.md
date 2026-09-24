@@ -178,7 +178,7 @@ time this was written)
   disclosed behavior, not a bug, and is not yet fixed (no live wind feed
   exists).
 
-### Known limitation of the SHIPPED feature: real saturation rate over the full committed month
+### Known limitation of the SHIPPED feature: real saturation rate over the full committed month (SUPERSEDED -- see correction below)
 
 This is a finding about the directional tracer described above -- already
 built, tested, and merged -- not about a future phase. Swept
@@ -204,6 +204,42 @@ one -- picked deliberately because it was one of the few hours that
 works, not because most hours work. Do not read that E2E success as
 evidence the feature works reliably; read this table as what it actually
 does across a real month.
+
+**CORRECTION (found during PROMPT_FLOW_UI.md Phase U6's verification,
+not a new sweep run for its own sake): the table above is stale, not
+current behavior.** It was written in commit `5798c2d` (2026-09-10
+23:58) -- roughly 1.5 days BEFORE commit `e1fbe37` ("feat: fall back to
+boundary-exit sector when adjoint trace saturates", 2026-09-12 14:33)
+changed what `run_adjoint_tracer()` does on a fully-saturated trace: it
+no longer returns `confidence: 0.0` directly (what the table above
+measured); it now falls back to a real boundary-exit-sector estimate
+with its own, usually much higher, confidence. Confirmed via git
+ancestry (`git merge-base --is-ancestor 5798c2d e1fbe37`), not assumed
+from commit order alone.
+
+Re-swept the identical real 744 hours, same functions, same receptor,
+against the CURRENT code:
+
+| metric | value (current code) |
+|---|---|
+| fully saturated (confidence == 0.0) | 0 / 744 (0.0%) |
+| usable signal (confidence > 0.1) | 731 / 744 (98.3%) |
+| reasonably usable (confidence > 0.5) | 710 / 744 (95.4%) |
+| mean confidence | 0.93 |
+| tier split | boundary_sector_fallback: 644, interior: 100 |
+
+**The real current behavior is the near-opposite of what this section
+originally disclosed.** At this domain size and Nellore's real wind
+climatology, TODAY's shipped code reports a usable directional estimate
+on roughly 98 of 100 hours the tracer is run against, not roughly 1 of
+10. The tier split shows most of that usable signal comes from the
+boundary-exit-sector fallback (644/744), which is real and honestly
+computed (see `run_adjoint_tracer()`'s own comment on why: which sector
+the traced mass actually exits through is still a real directional
+signal), not from the interior centroid (100/744). Any future work
+citing "the feature usually reports no usable estimate" is citing the
+STALE table above, not current behavior -- check `e1fbe37` shipped
+before trusting that framing again.
 
 ### Real scheduling, added and verified unattended (this session)
 
