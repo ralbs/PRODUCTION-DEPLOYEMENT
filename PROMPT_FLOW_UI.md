@@ -662,6 +662,23 @@ identical adversarial sequence against a fresh production build after
 the fix: `latest.meta.station_id` stayed `"KSPCB-B"` (`pm2_5=20`,
 correct) straight through A's stale resolution, no console errors.
 
+**All three, individually, not generalized from one.** The claim above
+only directly exercised `refreshStation` (via `latest`); `refreshForecast`
+and `refreshSourceDirection` were fixed on the reasoning that they share
+the identical shape, not verified independently -- a real gap, caught by
+a direct follow-up question. Re-tested properly: all three endpoints
+mocked with the same asymmetric delay (station A 4s, station B 0.3s) in
+one run, each returning a payload distinguishable per station
+(`forecast.station_marker`, `sourceDirection.bearing_deg` 111.1 vs.
+222.2), switched to B at ~300ms, confirmed via trace log that all three
+of A's stale responses genuinely resolved ~4s later (t=30.106 in that
+run), then checked each of the three resulting states independently via
+direct fiber inspection: `latest.meta.station_id`, `forecast.
+station_marker`, and `sourceDirection.doc.station_id` all correctly read
+`"KSPCB-B"` (bearing `222.2`, B's value, not A's `111.1`). No console
+errors. All three guards confirmed working individually, not assumed
+from the shared code shape.
+
 ---
 
 ### Phase U6 — Reframe source direction in plain language
