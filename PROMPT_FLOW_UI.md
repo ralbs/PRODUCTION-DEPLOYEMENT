@@ -783,6 +783,23 @@ phase had written: `6f4416f` (the doc itself) and `4187c8d`
 (SourceDirectionPanel.jsx's inconclusive-state text, which had cited the
 stale figure to claim commonality it doesn't have).
 
+**Open follow-up (not urgent, not done): the 0.6/0.3 cutoffs are
+distribution-checked, NOT accuracy-calibrated.** The check above only
+shows that each band is reachable. It does not show that "High" means
+the bearing is usually right. That needs estimates scored against a
+known source location, and the Nellore archive has no source ground
+truth. Two further gaps are still open:
+- `confidenceWord()` puts two different quantities on one scale:
+  interior `1 - boundary_inflow_fraction` and fallback sector
+  concentration. The 94.7/4.4/1.0 split was not broken out by tier.
+- Almost every estimate that is shown at all is labelled "High".
+  Until calibration exists, "High" means "high on this model's internal
+  metric", not "verified accurate".
+
+Revisit once any known-location release, or a controlled or synthetic
+ground-truth run, is available. Until then, don't cite these bands as
+validated anywhere.
+
 ---
 
 ### Phase U7 — Trend/forecast visualization
