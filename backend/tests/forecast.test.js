@@ -1,7 +1,7 @@
 jest.mock("../models/Telemetry");
 
 const Telemetry = require("../models/Telemetry");
-const { buildForecast, checkSpike } = require("../lib/forecast");
+const { buildForecast, checkSpike, holtWinters } = require("../lib/forecast");
 
 // Real fixture data. Verified by directly executing lib/aqi.js's
 // calculateAQI({pm10: v}) for v in [20,100]: CPCB's pm10 breakpoint band
@@ -110,35 +110,49 @@ describe("buildForecast history_aqi", () => {
 describe("buildForecast history_aqi -- real-world irregularities", () => {
   afterEach(() => jest.clearAllMocks());
 
-  test("irregular spacing -> each history timestamp is its own reading's, not start + i hours", async () => {
-    const start = new Date("2026-09-10T00:00:00Z").getTime();
-    const offsetsMin = [0, 60, 65, 240, 245, 600, 1440, 1500]; // gaps, bursts, a missing day
-    const docsOldestFirst = offsetsMin.map((m, i) =>
-      docWithAqi(50 + i, new Date(start + m * 60 * 1000))
-    );
+  test("uneven real gaps (+1h,+3h,+4h,+9h) -> each timestamp is the reading's own, not a constant step", async () => {
+    const t0 = new Date("2026-09-10T00:00:00Z").getTime();
+    const H = 3600 * 1000;
+    const offsetsH = [1, 3, 4, 9]; // gaps of 2h, 1h, 5h
+    const docsOldestFirst = offsetsH.map((h, i) => docWithAqi(50 + i, new Date(t0 + h * H)));
     mockFind([...docsOldestFirst].reverse());
 
     const result = await buildForecast("TEST-STATION");
+    const actual = result.history_aqi.map((h) => Date.parse(h.timestamp));
 
-    expect(result.history_aqi.map((h) => h.timestamp))
-      .toEqual(docsOldestFirst.map((d) => d.timestamp.toISOString()));
+    expect(actual).toEqual(offsetsH.map((h) => t0 + h * H));
+
+    // Discrimination: every constant-dt-per-index reconstruction differs
+    // from the real timestamps somewhere, so none could pass the check above.
+    const n = offsetsH.length, first = actual[0], last = actual[n - 1];
+    const constantDt = {
+      "first + i*1h": offsetsH.map((_, i) => first + i * H),
+      "last - (n-1-i)*1h": offsetsH.map((_, i) => last - (n - 1 - i) * H),
+      "evenly spaced first..last": offsetsH.map((_, i) => first + (i * (last - first)) / (n - 1)),
+    };
+    for (const xs of Object.values(constantDt)) expect(actual).not.toEqual(xs);
   });
 
-  test("reading with no computable AQI -> kept in history as aqi:null, skipped by the fit", async () => {
+  test("null-AQI reading mid-history -> kept as aqi:null in history, SKIPPED (not zeroed) by Holt-Winters", async () => {
     const start = new Date("2026-09-10T00:00:00Z").getTime();
-    const docsOldestFirst = [50, 52, 54, 56].map((v, i) =>
-      docWithAqi(v, new Date(start + i * 3600 * 1000))
-    );
-    // A reading with no AQI-bearing pollutants, inserted mid-series.
-    const blank = { timestamp: new Date(start + 1.5 * 3600 * 1000), pollutants: {}, meta: {} };
+    const H = 3600 * 1000;
+    const docsOldestFirst = [50, 52, 54, 56].map((v, i) => docWithAqi(v, new Date(start + i * H)));
+    // A real reading with no AQI-bearing pollutants, inserted mid-series.
+    const blank = { timestamp: new Date(start + 1.5 * H), pollutants: {}, meta: {} };
     docsOldestFirst.splice(2, 0, blank);
     mockFind([...docsOldestFirst].reverse());
 
     const result = await buildForecast("TEST-STATION");
 
+    // (a) the chart still gets the reading, as a null at its own time
     expect(result.history_aqi).toHaveLength(5);
     expect(result.history_aqi[2]).toEqual({ timestamp: blank.timestamp.toISOString(), aqi: null });
-    expect(result.history_aqi.filter((h) => h.aqi !== null).map((h) => h.aqi)).toEqual([50, 52, 54, 56]);
-    expect(result.predictions).toHaveLength(24); // fit still ran on the 4 real values
+
+    // (b) the fit skipped it: predictions equal holtWinters over the 4 real
+    // values, and NOT the fit a null->0 implementation would produce.
+    const skipped = holtWinters([50, 52, 54, 56]).forecast;
+    const zeroed = holtWinters([50, 52, 0, 54, 56]).forecast;
+    expect(skipped).not.toEqual(zeroed); // guard: the two outcomes are distinguishable
+    expect(result.predictions.map((p) => p.aqi)).toEqual(skipped);
   });
 });

@@ -3,6 +3,7 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from "recharts";
+import { buildForecastChartData } from "../lib/forecastChart";
 
 const VOICE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -16,9 +17,8 @@ function speak(text) {
   window.speechSynthesis.speak(utt);
 }
 
-function fmtTime(iso) {
-  if (!iso) return "";
-  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+function fmtTime(ms) {
+  return new Date(ms).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
 const TREND_ICON = {
@@ -65,25 +65,7 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
     );
   }
 
-  // Build chart data: last 12h history + 24h forecast
-  const histData = (forecast.history_aqi || []).slice(-12).map((h) => ({
-    time: fmtTime(h.timestamp),
-    historical: h.aqi,
-  }));
-
-  const fcastData = (forecast.predictions || []).map((p) => ({
-    time: fmtTime(p.timestamp),
-    forecast: p.aqi,
-    // [low, high] tuple -> recharts draws a true range area between them
-    band: [p.aqi_low, p.aqi_high],
-  }));
-
-  // Stitch together with a join point
-  const joinPoint = histData.length
-    ? { time: histData[histData.length - 1].time, historical: histData[histData.length - 1].historical, forecast: histData[histData.length - 1].historical }
-    : null;
-
-  const chartData = [...histData, ...(joinPoint ? [joinPoint] : []), ...fcastData];
+  const chartData = buildForecastChartData(forecast);
 
   const trend = forecast.trend || "stable";
   const trendClass = trend.replace(/ /g, "\\ ");
@@ -123,11 +105,15 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
       <ResponsiveContainer width="100%" height={190}>
         <ComposedChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(65,100,175,0.12)" />
-          <XAxis dataKey="time" tick={{ fontSize: 9, fill: "var(--text-dim)" }} interval="preserveStartEnd" />
+          {/* Numeric time axis: each point sits at its reading's real timestamp,
+              so uneven gaps between readings show as uneven spacing. */}
+          <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]}
+            tickFormatter={fmtTime} tick={{ fontSize: 9, fill: "var(--text-dim)" }} />
           <YAxis tick={{ fontSize: 9, fill: "var(--text-dim)" }} domain={[0, "auto"]} />
           <Tooltip
             contentStyle={{ background: "#141e30", border: "1px solid rgba(79,142,247,0.3)", borderRadius: 8, fontSize: 11 }}
             labelStyle={{ color: "var(--text-sub)" }}
+            labelFormatter={fmtTime}
           />
           <Legend wrapperStyle={{ fontSize: 10, color: "var(--text-dim)" }} />
 
@@ -153,7 +139,7 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
           {/* Historical line */}
           <Line
             dataKey="historical" stroke="rgba(148,163,184,0.7)" strokeWidth={1.5} dot={false}
-            name="Actual AQI"
+            name="Actual AQI" connectNulls={false}
           />
         </ComposedChart>
       </ResponsiveContainer>
