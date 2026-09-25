@@ -31,6 +31,7 @@ async function main() {
   app.use("/api/stations", require("./routes/stations"));
   app.use("/api/forecast", require("./routes/forecast"));
   app.use("/api/source-direction", require("./routes/source-direction"));
+  app.use("/api/emission-rate", require("./routes/emission-rate"));
 
   const apollo = new ApolloServer({ typeDefs, resolvers });
   await apollo.start();
