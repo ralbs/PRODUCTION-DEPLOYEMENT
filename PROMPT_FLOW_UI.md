@@ -791,7 +791,51 @@ known source location, and the Nellore archive has no source ground
 truth. Two further gaps are still open:
 - `confidenceWord()` puts two different quantities on one scale:
   interior `1 - boundary_inflow_fraction` and fallback sector
-  concentration. The 94.7/4.4/1.0 split was not broken out by tier.
+  concentration. **Per-tier split now done, see the analysis below.
+  Verdict: the shared cutoffs are not defensible, and separate
+  thresholds would not fix that either.**
+
+  Method: the same 744 real Nellore hours, NEL-001 receptor, and shipped
+  worker defaults (`run_adjoint_tracer()`: dt 3600 s, 2000 particles,
+  seed 0, 1 h window). The pooled 692/32/7 and the 644/100 tier split
+  reproduce exactly. Each trace's raw `AdjointResult` was captured, so
+  both formulas could be evaluated on the same runs.
+
+  | tier | n | hidden (<=0.1) | High | Moderate | Uncertain | min conf |
+  |---|---|---|---|---|---|---|
+  | boundary_sector_fallback | 644 | 0 | 621 (96.4%) | 23 (3.6%) | 0 | 0.451 |
+  | interior | 100 | 13 | 71 (81.6%) | 9 (10.3%) | 7 (8.0%) | 0.007 |
+
+  Findings:
+  1. **The two numbers measure different things.** Fallback confidence
+     is directional concentration: `(p_max - 1/8) / (1 - 1/8)` over 8
+     exit sectors. Interior confidence is mass retention:
+     `1 - boundary_inflow_fraction`, i.e. the interior mass plus the up
+     to ~5% lost to deposition. Retention says little about how sharp
+     the bearing is. The interior footprint's own angular concentration
+     (mean resultant length R about the receptor) is >= 0.99 in 95% of
+     interior hours, and its correlation with interior confidence is
+     only 0.21.
+  2. **Non-monotonic tier switch (a real defect).** The switch is a hard
+     `total_interior <= 0`. All 13 hidden interior hours kept 0.7-9% of
+     their mass inside the domain, and the rest exited through a single
+     sector (sector concentration >= 0.996 in every case). Had that
+     sliver been zero, the fallback would have labelled them "High". An
+     hour with 0% interior mass shows as High; an hour with 5% is hidden.
+  3. **Uncertain can never occur in the fallback tier.** With 8 sectors
+     and a 1 h window, the floor is 0.451. Values near 1 mostly mean
+     the wind held steady for the hour, which is a property of the wind
+     input, not of source localisation.
+
+  Why separate thresholds don't fix it: neither quantity estimates what
+  "Confidence: High" tells a user, which is that the bearing is probably
+  right. Candidate fix, which changes shipped CTM output and so needs a
+  deliberate decision (not done): define one bearing-confidence measure
+  and compute it the same way for both tiers, e.g. the directional
+  concentration of all traced weight, interior and exited alike. That
+  would share a scale by construction. Replace the hard tier switch with
+  a threshold or a blend. Accuracy calibration against ground truth
+  (below) is still needed after that.
 - Almost every estimate that is shown at all is labelled "High".
   Until calibration exists, "High" means "high on this model's internal
   metric", not "verified accurate".
