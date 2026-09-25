@@ -176,3 +176,27 @@ describe("POST /api/source-direction/ingest", () => {
     expect(SourceDirection.findOneAndUpdate).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("GET /api/source-direction/latest -- DB failure handling", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // Express 4 does not catch a rejected promise from an async handler: without
+  // a try/catch the request just hangs until the client gives up. The 1s
+  // client timeout turns that hang into a fast, explicit test failure.
+  test("returns 500 JSON (not a hung request) when the lookup rejects", async () => {
+    SourceDirection.findOne.mockReturnValue({
+      sort: () => ({ lean: () => Promise.reject(new Error("simulated Mongo outage")) }),
+    });
+    const res = await request(app).get("/api/source-direction/latest?station_id=NEL-001").timeout(1000);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
+    expect(JSON.stringify(res.body)).not.toContain("simulated Mongo outage"); // no internals leaked
+  });
+
+  test("still returns the stored doc on success", async () => {
+    SourceDirection.findOne.mockReturnValue({ sort: () => ({ lean: async () => ({ station_id: "NEL-001" }) }) });
+    const res = await request(app).get("/api/source-direction/latest?station_id=NEL-001").timeout(1000);
+    expect(res.status).toBe(200);
+    expect(res.body.station_id).toBe("NEL-001");
+  });
+});

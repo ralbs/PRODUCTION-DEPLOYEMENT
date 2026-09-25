@@ -95,9 +95,16 @@ router.get("/latest", async (req, res) => {
   const { station_id } = req.query;
   if (!station_id) return res.status(400).json({ error: "station_id query param required" });
 
-  const doc = await SourceDirection.findOne({ station_id }).sort({ timestamp: -1 }).lean();
-  if (!doc) return res.status(404).json({ error: "No source-direction estimate found for this station" });
-  res.json(doc);
+  // Express 4 doesn't catch a rejected promise from an async handler -- without
+  // this, a DB error leaves the request hanging instead of returning 500.
+  try {
+    const doc = await SourceDirection.findOne({ station_id }).sort({ timestamp: -1 }).lean();
+    if (!doc) return res.status(404).json({ error: "No source-direction estimate found for this station" });
+    res.json(doc);
+  } catch (err) {
+    console.error("[source-direction] latest lookup failed:", err.message);
+    res.status(500).json({ error: "Failed to load source-direction estimate" });
+  }
 });
 
 module.exports = router;
