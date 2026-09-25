@@ -801,6 +801,33 @@ Commit on its own.
 **Acceptance**: a real, working chart showing real forecast data,
 screenshotted and verified.
 
+**Outcome (done -- premise was stale, two real bugs fixed instead)**:
+the phase text above is wrong that recharts was unused. The Phase U0
+audit only listed it as a dependency, and `ForecastPanel.jsx` has
+rendered a recharts `ComposedChart` of this exact forecast data inside
+`FullscreenCard` since the initial commit. Verifying it for real found
+two bugs:
+- **Backend: 500 for any station with 3-23 readings.** `history_aqi`
+  indexed `orderedDocs[length - 24 + i]`, which goes negative with fewer
+  than 24 readings. The result was an `Invalid Date`, whose
+  `toISOString()` threw. The frontend swallows forecast errors, so these
+  stations showed "Loading forecast..." forever. Fixed by using each
+  doc's own timestamp. The regression test in
+  `backend/tests/forecast.test.js` fails 3 of 5 cases without the fix.
+- **Frontend: confidence band drawn as 0..high, not low..high.** The
+  band was a `high` area masked by a `--bg-deep`-filled `low` area. That
+  mask rendered at recharts' default 0.6 fill-opacity over a card that
+  isn't `--bg-deep`, so it showed up as a dark slab from 0 up to low.
+  Replaced with a single range `<Area>` over `[aqi_low, aqi_high]`.
+
+Verification: real Vite dev server against a mock `:4000` whose
+`/api/forecast` ran the real `buildForecast()` over a stubbed Telemetry
+model with a realistic diurnal PM series, at 72 readings and at 10
+readings (the second case was a 500 before the fix). Headless `$B`
+element screenshots were taken before and after. No console errors
+beyond the deliberately unmocked endpoints' 404s. The live backend was
+not started, because it would connect to the real Mongo and MQTT broker.
+
 ---
 
 ### Phase U8 — Source-composition breakdown (BLOCKED, do not start)

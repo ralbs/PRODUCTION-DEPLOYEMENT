@@ -74,8 +74,8 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
   const fcastData = (forecast.predictions || []).map((p) => ({
     time: fmtTime(p.timestamp),
     forecast: p.aqi,
-    low: p.aqi_low,
-    high: p.aqi_high,
+    // [low, high] tuple -> recharts draws a true range area between them
+    band: [p.aqi_low, p.aqi_high],
   }));
 
   // Stitch together with a join point
@@ -136,9 +136,12 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
           <ReferenceLine y={200} stroke="#f97316" strokeDasharray="4 2" strokeWidth={0.8} />
           <ReferenceLine y={300} stroke="#ef4444" strokeDasharray="4 2" strokeWidth={0.8} />
 
-          {/* Confidence band */}
-          <Area dataKey="high" fill="rgba(79,142,247,0.08)" stroke="none" name="CI High" legendType="none" />
-          <Area dataKey="low" fill="var(--bg-deep)" stroke="none" name="CI Low" legendType="none" />
+          {/* Confidence band: one range area spanning aqi_low..aqi_high. The
+              old high-area + bg-colored low-area "mask" rendered at recharts'
+              default 0.6 fill-opacity over a non-bg-deep card, so the band
+              read as 0..high instead of low..high. */}
+          <Area dataKey="band" fill="rgba(79,142,247,0.14)" fillOpacity={1} stroke="none"
+            name="Forecast range" legendType="none" isAnimationActive={false} />
 
           {/* Forecast line */}
           <Line

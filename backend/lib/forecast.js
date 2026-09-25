@@ -96,9 +96,12 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   else
     voiceText += "Air quality should remain acceptable throughout the forecast period.";
 
-  // History sample for the combined chart (last 24 readings)
-  const historyAqi = orderedDocs.slice(-24).map((d, i) => ({
-    timestamp: new Date(orderedDocs[orderedDocs.length - 24 + i]?.timestamp).toISOString(),
+  // History sample for the combined chart (last 24 readings). Uses each
+  // doc's own timestamp -- the old `orderedDocs[length - 24 + i]` index went
+  // negative with fewer than 24 readings, producing an Invalid Date whose
+  // toISOString() threw, 500-ing the whole route for young stations.
+  const historyAqi = orderedDocs.slice(-24).map((d) => ({
+    timestamp: new Date(d.timestamp).toISOString(),
     aqi: calculateAQI(d.pollutants)?.aqi ?? null,
   }));
 

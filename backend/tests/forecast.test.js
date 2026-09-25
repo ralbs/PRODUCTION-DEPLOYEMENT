@@ -1,7 +1,7 @@
 jest.mock("../models/Telemetry");
 
 const Telemetry = require("../models/Telemetry");
-const { checkSpike } = require("../lib/forecast");
+const { buildForecast, checkSpike } = require("../lib/forecast");
 
 // Real fixture data. Verified by directly executing lib/aqi.js's
 // calculateAQI({pm10: v}) for v in [20,100]: CPCB's pm10 breakpoint band
@@ -80,5 +80,29 @@ describe("checkSpike", () => {
     mockFind([]);
     const result = await checkSpike("TEST-STATION", 168);
     expect(result).toBeNull();
+  });
+});
+
+describe("buildForecast history_aqi", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // Regression: with fewer than 24 readings the old code indexed
+  // orderedDocs[length - 24 + i] (negative -> undefined -> Invalid Date),
+  // and toISOString() threw, 500-ing GET /api/forecast for young stations.
+  test.each([3, 10, 23, 24, 30])("%i readings -> history timestamps match each reading", async (n) => {
+    const start = new Date("2026-09-10T00:00:00Z").getTime();
+    const docsOldestFirst = Array.from({ length: n }, (_, i) =>
+      docWithAqi(50 + i, new Date(start + i * 3600 * 1000))
+    );
+    mockFind([...docsOldestFirst].reverse());
+
+    const result = await buildForecast("TEST-STATION");
+
+    const expected = docsOldestFirst.slice(-24);
+    expect(result.history_aqi).toHaveLength(expected.length);
+    result.history_aqi.forEach((h, i) => {
+      expect(h.timestamp).toBe(expected[i].timestamp.toISOString());
+      expect(h.aqi).toBe(expected[i].pollutants.pm10); // pm10 -> AQI is 1:1 in this band
+    });
   });
 });
