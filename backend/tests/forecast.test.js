@@ -106,3 +106,39 @@ describe("buildForecast history_aqi", () => {
     });
   });
 });
+
+describe("buildForecast history_aqi -- real-world irregularities", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test("irregular spacing -> each history timestamp is its own reading's, not start + i hours", async () => {
+    const start = new Date("2026-09-10T00:00:00Z").getTime();
+    const offsetsMin = [0, 60, 65, 240, 245, 600, 1440, 1500]; // gaps, bursts, a missing day
+    const docsOldestFirst = offsetsMin.map((m, i) =>
+      docWithAqi(50 + i, new Date(start + m * 60 * 1000))
+    );
+    mockFind([...docsOldestFirst].reverse());
+
+    const result = await buildForecast("TEST-STATION");
+
+    expect(result.history_aqi.map((h) => h.timestamp))
+      .toEqual(docsOldestFirst.map((d) => d.timestamp.toISOString()));
+  });
+
+  test("reading with no computable AQI -> kept in history as aqi:null, skipped by the fit", async () => {
+    const start = new Date("2026-09-10T00:00:00Z").getTime();
+    const docsOldestFirst = [50, 52, 54, 56].map((v, i) =>
+      docWithAqi(v, new Date(start + i * 3600 * 1000))
+    );
+    // A reading with no AQI-bearing pollutants, inserted mid-series.
+    const blank = { timestamp: new Date(start + 1.5 * 3600 * 1000), pollutants: {}, meta: {} };
+    docsOldestFirst.splice(2, 0, blank);
+    mockFind([...docsOldestFirst].reverse());
+
+    const result = await buildForecast("TEST-STATION");
+
+    expect(result.history_aqi).toHaveLength(5);
+    expect(result.history_aqi[2]).toEqual({ timestamp: blank.timestamp.toISOString(), aqi: null });
+    expect(result.history_aqi.filter((h) => h.aqi !== null).map((h) => h.aqi)).toEqual([50, 52, 54, 56]);
+    expect(result.predictions).toHaveLength(24); // fit still ran on the 4 real values
+  });
+});
