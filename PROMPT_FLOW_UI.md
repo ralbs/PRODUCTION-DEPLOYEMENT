@@ -844,6 +844,67 @@ Revisit once any known-location release, or a controlled or synthetic
 ground-truth run, is available. Until then, don't cite these bands as
 validated anywhere.
 
+**Synthetic accuracy run (done): confidence does NOT predict bearing
+accuracy.** Harness: `ctm-core/scripts/tracer_accuracy_harness.py`, with
+tests in `ctm-core/tests/scripts/test_tracer_accuracy_harness.py`. It
+uses the same technique as the SourceInversion recovery proof:
+- 48 known point sources (16 bearings every 22.5 deg, at 2, 5 and 9 km
+  from NEL-001) run through the real `Simulator` over the real
+  744-hour Nellore wind archive.
+- An hour counts as a detection when a source's receptor concentration
+  is >= `detect_frac` x its own peak.
+- The unmodified `run_adjoint_tracer()` is scored on each detected hour.
+
+The tracer never sees concentrations, so a source only decides which
+hours get scored. Rows are (source, hour) pairs, and the CIs are
+hour-clustered bootstraps.
+
+| detect_frac | rows / hours | median err | within 45 deg | rho(conf, err) pooled | interior | fallback |
+|---|---|---|---|---|---|---|
+| 0.05 (headline) | 2749 / 489 | 21.0 | 92% | -0.08 [-0.14, -0.02] | **+0.25 [+0.13, +0.35]** | -0.18 [-0.25, -0.11] |
+| 0.01 | 5066 / 742 | 22.4 | 90% | -0.12 [-0.16, -0.07] | **+0.15 [+0.02, +0.25]** | -0.15 [-0.20, -0.10] |
+| 0.2 | 1103 / 321 | 21.0 | 92% | -0.01 [-0.11, +0.07] | **+0.22 [+0.08, +0.35]** | -0.13 [-0.24, -0.02] |
+
+A uniformly random bearing would have a median error of 90 deg and land
+within 45 deg 25% of the time.
+
+1. **The bearing itself is good, as an upper bound.** Median error is
+   about 21 deg, and 90%+ of estimates land within 45 deg. The fallback
+   tier's ~21-22 deg median is essentially its 45-deg sector
+   quantisation.
+2. **Confidence is inverted in the interior tier.** A positive rho means
+   higher confidence goes with LARGER error, and the CI excludes 0 at
+   every detect_frac. Interior "High" is the least accurate interior
+   band: 69-80% within 45 deg, against 84-100% for Moderate/Uncertain.
+   Supported mechanism (correlation, not proven): high interior
+   confidence means slow wind (rho -0.40 vs wind speed), which means a
+   nearby centroid (rho -0.45 vs centroid distance), which means a
+   noisier bearing (rho -0.38, distance vs error).
+3. **The fallback tier has the right sign but is too weak to use.**
+   rho is -0.13 to -0.18, and 96% of its rows are "High" anyway.
+4. **Hidden estimates are not worse.** The <=0.1 band that
+   `isInconclusive()` suppresses lands within 45 deg 76-96% of the time,
+   comparable to the "High" rows that are shown. Caveat: that is only
+   11-13 distinct hours.
+
+Limits, which make these numbers optimistic, not pessimistic:
+- **Identical twin.** The forward and backward models share the same
+  error-free, spatially uniform single-station wind.
+- **Idealised sources.** One isolated source at a time, with no
+  background variability.
+- **Stand-in detection.** The relative-signal criterion is not the real
+  Holt-Winters spike trigger.
+- **Thin bands.** Moderate, Uncertain and hidden each rest on 5-32
+  distinct hours.
+
+What this means for the pending decision above: the numeric cutoffs
+(0.6/0.3/0.1) are not really the problem. Neither confidence quantity
+measures what the label claims. The UI shows "Confidence: High" for
+interior estimates that are, if anything, less accurate. Any
+replacement confidence has to be checked with this harness, and it
+still has to account for real wind error, which the harness cannot
+measure.
+
 ---
 
 ### Phase U7 — Trend/forecast visualization
