@@ -3,7 +3,7 @@
 Three services, kept deliberately separate — not merged into one folder.
 
 ```
-frontend/   Next.js/React (Vercel) — the public dashboard, aqms-flame.vercel.app
+frontend/   Vite/React (Vercel project "aqhi") — the public dashboard, aqhi.vercel.app
 backend/    Node/Express (Render) — ingest API + Mongo, real ESP32 devices report here
 ctm-core/   Python — CTM, adjoint tracer, source inversion. Has its own
             detailed CLAUDE.md — read it in full before touching this
@@ -26,6 +26,20 @@ this one. Real consequences of that, worth remembering throughout:
 - Any credential/secret work (DEVICE_KEYS, MONGO_URI, etc.) needs fresh
   values under the new accounts — nothing transfers automatically from
   an account you don't control.
+- **Which live URLs are this repo's (checked 2026-09-26 by probing the
+  live services and their served bundles, not recalled from a doc):**
+  - `aqhi.vercel.app` is this repo's dashboard. Its bundle calls
+    `aqhi-backend.onrender.com`, the backend real devices report to (see
+    `render.yaml`'s own note on why that name, not `aqms-backend`). Both
+    redeployed from the 2026-09-26 push to `main`.
+  - `aqms-flame.vercel.app` is a SEPARATE, pre-migration deployment
+    under a different account. It is not linked to this repo, did not
+    redeploy on that push, and still serves its own stale build (last
+    modified 2026-09-11). Its bundle calls `aqms-dedk.onrender.com`,
+    which serves old Bangalore KSPCB data, not the NEL-001 device. It is
+    NOT the device fallback described above. Don't treat it as one,
+    don't try to reconcile it with this repo, and don't "fix" drift
+    between the two.
 
 See PROMPT_FLOW_INTEGRATION.md's Phase I1 for the exact sequence.
 
