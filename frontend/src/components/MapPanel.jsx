@@ -295,15 +295,23 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
       attributionControl: false,
     });
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 18,
+    // Esri World Dark Gray Canvas (keyless). CARTO's basemaps.cartocdn.com
+    // began returning an "API KEY REQUIRED" tile for every request (checked
+    // 2026-09-26), which blanked this map. Note Esri's {y}/{x} order, and
+    // native tiles stop at z16 -- beyond that Leaflet upscales them.
+    const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
+    L.tileLayer(`${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+      maxZoom: 18, maxNativeZoom: 16,
+    }).addTo(map);
+    L.tileLayer(`${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, {
+      maxZoom: 18, maxNativeZoom: 16,
     }).addTo(map);
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
 
     // Small credit
     L.control.attribution({ position: "bottomleft", prefix: false })
-      .addAttribution('<span style="color:#3d5078;font-size:9px">© OSM · CARTO</span>')
+      .addAttribution('<span style="color:#3d5078;font-size:9px">Powered by Esri · Esri, HERE, Garmin, © OpenStreetMap contributors</span>')
       .addTo(map);
 
     // Dispersion layer — sits above the basemap, below the station markers
@@ -349,6 +357,19 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
       plumeGeoCellsRef.current = [];
     };
   }, [resetHeatmap, resetPlumeOverlay]);
+
+  // Center on the selected station. The init above opens on a fixed
+  // (Bangalore) view, which left the real Nellore stations -- and the
+  // plume/bearing overlays anchored to them -- ~300 km off-screen. Keyed
+  // on the station's coordinates, not the `stations` array, so periodic
+  // station refetches don't yank the view back after the user pans away.
+  const selectedLoc = stations.find((s) => s.station_id === selectedStation)?.location;
+  const selLat = selectedLoc?.lat, selLon = selectedLoc?.lon;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !Number.isFinite(selLat) || !Number.isFinite(selLon)) return;
+    map.setView([selLat, selLon], Math.max(map.getZoom(), 12));
+  }, [selLat, selLon]);
 
   // Redraw markers whenever data changes
   useEffect(() => {
@@ -417,7 +438,7 @@ export default function MapPanel({ stations, stationsAQI, selectedStation, onSel
         letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-dim)",
         pointerEvents: "none",
       }}>
-        Station Network · Bangalore
+        Station Network
       </div>
     </div>
   );

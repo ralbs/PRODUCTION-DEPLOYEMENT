@@ -29,7 +29,13 @@ const TREND_ICON = {
   stable: "→",
 };
 
-export default function ForecastPanel({ forecast, voiceEnabled }) {
+const EMPTY_MESSAGE = {
+  loading: "Loading forecast…",
+  not_found: "Not enough readings to forecast yet. The Holt-Winters forecast needs at least 3 readings with a computable AQI, and this station doesn't have that many.",
+  error: "Forecast unavailable right now. Couldn't reach the forecast service; it will retry automatically.",
+};
+
+export default function ForecastPanel({ forecast, status = "loading", voiceEnabled }) {
   const [speaking, setSpeaking] = useState(false);
   const intervalRef = useRef(null);
 
@@ -58,8 +64,8 @@ export default function ForecastPanel({ forecast, voiceEnabled }) {
     return (
       <div className="forecast-section">
         <div className="card-title">AI Forecast · 24h</div>
-        <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>
-          Loading forecast…
+        <div style={{ color: "var(--text-sub)", fontSize: 12, padding: "20px 0", lineHeight: 1.6 }}>
+          {EMPTY_MESSAGE[status] ?? EMPTY_MESSAGE.loading}
         </div>
       </div>
     );

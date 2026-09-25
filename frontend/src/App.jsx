@@ -59,6 +59,10 @@ export default function App() {
   const [latest, setLatest]             = useState(null);
   const [history, setHistory]           = useState([]);
   const [forecast, setForecast]         = useState(null);
+  // "loading"|"ok"|"not_found"|"error" -- without this, a 404 ("not enough
+  // data to build forecast") left ForecastPanel on "Loading forecast..."
+  // forever, since the catch below used to swallow every failure.
+  const [forecastStatus, setForecastStatus] = useState("loading");
   // { status: "idle"|"loading"|"ok"|"not_found"|"error", doc, error } --
   // see SourceDirectionPanel.jsx for how each status renders.
   const [sourceDirection, setSourceDirection] = useState({ status: "idle", doc: null, error: null });
@@ -144,7 +148,18 @@ export default function App() {
       const data = await api.getForecast(selected);
       if (selectedRef.current !== requestedFor) return;
       setForecast(data);
-    } catch { /* stale or real failure either way -- no state to roll back */ }
+      setForecastStatus("ok");
+    } catch (e) {
+      if (selectedRef.current !== requestedFor) return;
+      if (e.message.startsWith("404")) {
+        setForecast(null);
+        setForecastStatus("not_found");
+      } else {
+        // A failed periodic refresh keeps any forecast already on screen;
+        // the panel only shows the error when there's nothing to show.
+        setForecastStatus("error");
+      }
+    }
   }, [selected]);
 
   // PROMPT_FLOW_UI.md Phase U3 -- no fixed polling interval here, unlike
@@ -173,7 +188,7 @@ export default function App() {
   }, [selected]);
 
   useEffect(() => {
-    setLatest(null); setHistory([]); setForecast(null);
+    setLatest(null); setHistory([]); setForecast(null); setForecastStatus("loading");
     setSourceDirection({ status: "idle", doc: null, error: null });
     // Same guard as sourceDirection above, and for the same reason:
     // MapPanel's buildPlumeGeoCells anchors plumeResult's grid to
@@ -266,7 +281,7 @@ export default function App() {
           </FullscreenCard>
 
           <FullscreenCard title="24h Forecast" icon={<ForecastIcon />} meta="AI prediction">
-            <ForecastPanel forecast={forecast} voiceEnabled={voiceEnabled} />
+            <ForecastPanel forecast={forecast} status={forecastStatus} voiceEnabled={voiceEnabled} />
           </FullscreenCard>
 
           <FullscreenCard title="Source Direction" icon={<DirectionIcon />}
