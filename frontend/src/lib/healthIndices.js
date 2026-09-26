@@ -51,10 +51,19 @@ export const CRP_REFERENCE = [
 //    Published Equation (Health Canada, Stieb DM et al. 2008)
 //    AQHI = (1000/10.4) × [exp(0.000537×O₃) + exp(0.000871×NO₂)
 //           + exp(0.000487×PM2.5) − 3]
+//    Stieb's coefficients take O₃ and NO₂ in PPB (PM2.5 in µg/m³). This
+//    codebase stores every gas in µg/m³, so both are converted first --
+//    feeding µg/m³ straight in overstated the NO₂ term ~1.9× (NEL-001's
+//    real reading showed AQHI 2.2 instead of 1.6).
 // ─────────────────────────────────────────────────────────────────────────────
+// ppb = µg/m³ × 24.45 / MW, at 25 °C and 1 atm (24.45 L/mol molar volume).
+const MOLAR_VOLUME_L = 24.45;
+const MW = { no2: 46.0055, o3: 47.9982 };
+export const ugm3ToPpb = (ugm3, gas) => (ugm3 * MOLAR_VOLUME_L) / MW[gas];
+
 export function calcAQHI({ pm2_5 = 0, no2 = 0, o3 = 0 }) {
-  const a = Math.exp(0.000537 * (o3 || 0));
-  const b = Math.exp(0.000871 * (no2 || 0));
+  const a = Math.exp(0.000537 * ugm3ToPpb(o3 || 0, "o3"));
+  const b = Math.exp(0.000871 * ugm3ToPpb(no2 || 0, "no2"));
   const c = Math.exp(0.000487 * (pm2_5 || 0));
   const raw = (1000 / 10.4) * (a + b + c - 3);
   return Math.max(0, +raw.toFixed(1));
