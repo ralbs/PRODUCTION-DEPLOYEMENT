@@ -1,7 +1,7 @@
 const express = require("express");
 const Telemetry = require("../models/Telemetry");
-const { calculateAQI } = require("../lib/aqi");
-const { preparePollutants } = require("../lib/prepare");
+const { calculateAQI, informationalReadings } = require("../lib/aqi");
+const { preparePollutants, prepareDisplayPollutants } = require("../lib/prepare");
 
 const router = express.Router();
 
@@ -17,7 +17,9 @@ router.get("/latest", async (req, res) => {
 
   const pollutants = await preparePollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
   const aqi = calculateAQI(pollutants);
-  res.json({ timestamp: doc.timestamp, station_id, ...aqi });
+  const display = await prepareDisplayPollutants(doc.pollutants, doc.diagnostics, doc.meta.device_id);
+  // informational_readings is a sibling of the spread AQI fields, never one of them.
+  res.json({ timestamp: doc.timestamp, station_id, ...aqi, informational_readings: informationalReadings(display) });
 });
 
 // GET /api/aqi/history?station_id=NEL-001&from=...&to=...&limit=500
@@ -41,7 +43,8 @@ router.get("/history", async (req, res) => {
   const series = [];
   for (const d of docs) {
     const pollutants = await preparePollutants(d.pollutants, d.diagnostics, d.meta.device_id);
-    series.push({ timestamp: d.timestamp, ...calculateAQI(pollutants) });
+    const display = await prepareDisplayPollutants(d.pollutants, d.diagnostics, d.meta.device_id);
+    series.push({ timestamp: d.timestamp, ...calculateAQI(pollutants), informational_readings: informationalReadings(display) });
   }
 
   res.json(series);

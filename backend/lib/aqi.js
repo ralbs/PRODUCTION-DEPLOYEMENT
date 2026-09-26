@@ -24,11 +24,15 @@
  * impossible (a broken/uncalibrated sensor) are rejected by the sanity
  * ceilings so one bad channel can't poison the whole index.
  *
- * NOTE ON H2S / H2 / MQ135 / VOC: these four have NO official CPCB AQI
- * breakpoints. They are included in the index with INVENTED, non-standard
- * thresholds (band ranges tuned to each channel's typical sensor scale) per
- * operator request. Treat them as informational — they are NOT a standard
- * CPCB AQI contribution.
+ * H2S / H2 / MQ135 / VOC ARE NOT PART OF THE AQI. None has an official CPCB
+ * breakpoint table. They used to be scored with invented bands and fed into
+ * the same max(), so a non-CPCB channel could set the headline number and be
+ * reported as the dominant pollutant (NEL-001: 234 "Poor" from voc_gas_ohm,
+ * where every real pollutant was <= 33). voc_gas_ohm was also scored
+ * backwards -- per Bosch's BME680 datasheet (BST-BME680-DS001-09 s.4.2)
+ * resistance FALLS as VOCs rise -- and raw ohms have no fixed scale at all.
+ * They are now reported only by informationalReadings(), under a separate
+ * API key, never as a sub-index and never as dominant_pollutant.
  */
 
 const BREAKPOINTS = {
@@ -80,51 +84,11 @@ const BREAKPOINTS = {
     [1201, 1800, 301, 400],
     [1801, 5000, 401, 500],
   ],
-  /* ---- INVENTED / NON-CPCB breakpoints (operator-requested) ---- */
-  /*
-   * Bands are tuned to each channel's observed firmware output scale so that
-   * routine (noisy, uncalibrated) baseline readings land in Good/Satisfactory
-   * and only genuinely elevated readings push the index higher. They do NOT
-   * reflect any regulatory standard — informational only.
-   */
-  h2s: [ // µg/m3 (no CPCB AQI table — informational only)
-    [0, 300, 0, 50],
-    [301, 600, 51, 100],
-    [601, 1200, 101, 200],
-    [1201, 2500, 201, 300],
-    [2501, 5000, 301, 400],
-    [5001, 10000, 401, 500],
-  ],
-  h2: [ // µg/m3 (no CPCB AQI table — informational only)
-    [0, 200, 0, 50],
-    [201, 500, 51, 100],
-    [501, 1500, 101, 200],
-    [1501, 3000, 201, 300],
-    [3001, 8000, 301, 400],
-    [8001, 20000, 401, 500],
-  ],
-  mq135: [ // unitless proxy (no CPCB AQI table — informational only)
-    [0, 1.0, 0, 50],
-    [1.1, 2.0, 51, 100],
-    [2.1, 3.0, 101, 200],
-    [3.1, 4.0, 201, 300],
-    [4.1, 5.0, 301, 400],
-    [5.1, 10, 401, 500],
-  ],
-  voc_gas_ohm: [ // Ω (no CPCB AQI table — informational only)
-    [0, 25000, 0, 50],
-    [25001, 35000, 51, 100],
-    [35001, 45000, 101, 200],
-    [45001, 60000, 201, 300],
-    [60001, 80000, 301, 400],
-    [80001, 100000, 401, 500],
-  ],
 };
 
 /*
- * Physically-plausible ceilings per channel. Gases/mq135/voc are all already
- * in the firmware's stored scale (µg/m³ for gases; mq135 is a unitless proxy;
- * voc_gas_ohm in Ω). Anything above these is a broken/uncalibrated sensor —
+ * Physically-plausible ceilings for the AQI's input channels, in the
+ * firmware's stored scale (µg/m³). Anything above these is a broken/uncalibrated sensor —
  * a single bad channel must not hijack the AQI. Note: values here must not
  * be lower than the top breakpoint band, or the top band would be unreachable.
  */
@@ -135,12 +99,8 @@ const SANITY_MAX = {
   no2:     2000,    // µg/m³
   o3:      1000,    // µg/m³
   nh3:     5000,    // µg/m³ (matches top NH3 breakpoint)
-  h2s:    10000,    // µg/m³ (matches top H2S breakpoint)
-  h2:     20000,    // µg/m³ (matches top H2 breakpoint)
-  mq135:     10,    // unitless proxy (matches top MQ135 breakpoint)
   co:     100000,   // µg/m³ (~100 mg/m³ CO; MiCS CO channel is -1/disabled)
   mq7_co: 100000,   // µg/m³ (~100 mg/m³ CO)
-  voc_gas_ohm: 100000, // Ω (matches top VOC breakpoint)
 };
 
 /**
@@ -148,8 +108,8 @@ const SANITY_MAX = {
  *   - null / undefined / NaN
  *   - ≤ 0  (firmware uses -1 as a "sensor fault / disabled" sentinel)
  *   - above the physically-plausible ceiling (broken/uncalibrated channel)
- * Every channel with a BREAKPOINTS entry is eligible for the AQI; the sanity
- * ceilings (not a trust whitelist) are what keep broken readings out.
+ * Only the six CPCB pollutants (BREAKPOINTS) are eligible for the AQI; the
+ * sanity ceilings (not a trust whitelist) are what keep broken readings out.
  * Unknown keys are left untouched. Raw stored data is never mutated.
  */
 function sanitizePollutants(pollutants) {
@@ -220,10 +180,8 @@ function calculateAQI(pollutants) {
     o3:    clean.o3,    // µg/m³
     co:    coSource != null ? coSource / 1000 : null, // µg/m³ -> mg/m³
     nh3:   clean.nh3,   // µg/m³
-    h2s:   clean.h2s,   // µg/m³ (invented breakpoints)
-    h2:    clean.h2,    // µg/m³ (invented breakpoints)
-    mq135: clean.mq135, // unitless proxy (invented breakpoints)
-    voc_gas_ohm: clean.voc_gas_ohm, // Ω (invented breakpoints)
+    // Only the six CPCB pollutants above. The four informational channels
+    // are deliberately absent -- see informationalReadings() below.
   };
 
   const subIndices = {};
@@ -249,4 +207,39 @@ function calculateAQI(pollutants) {
   };
 }
 
-module.exports = { calculateAQI, sanitizePollutants, subIndex, aqiCategory, BREAKPOINTS };
+/*
+ * Sensor channels this board reports that have NO official CPCB AQI
+ * breakpoints. Returned under their own `informational_readings` key, a
+ * sibling of `aqi` in every API response -- never inside the AQI object,
+ * never scored, never eligible as dominant_pollutant.
+ */
+const INFORMATIONAL_CHANNELS = {
+  h2s:   { unit: "µg/m³", note: "No CPCB AQI breakpoints. Not part of the AQI." },
+  h2:    { unit: "µg/m³", note: "No CPCB AQI breakpoints. Not part of the AQI." },
+  mq135: { unit: "unitless", note: "MQ-135 multi-gas proxy, not a single pollutant. Not part of the AQI." },
+  voc_gas_ohm: {
+    unit: "Ω",
+    note: "BME680 raw gas resistance, not a concentration. Resistance FALLS as VOCs rise (Bosch BME680 datasheet s.4.2); raw ohms have no fixed scale. Not part of the AQI.",
+  },
+};
+
+/**
+ * @param pollutants - display (calibrated, unfiltered) pollutants.
+ * Missing / non-finite / <= 0 (the firmware's -1 fault sentinel) -> null.
+ * No AQI sanity ceiling is applied: those exist to stop one bad channel
+ * hijacking the AQI max(), which these channels never enter.
+ */
+function informationalReadings(pollutants) {
+  const out = {};
+  for (const [key, meta] of Object.entries(INFORMATIONAL_CHANNELS)) {
+    const v = pollutants?.[key];
+    const value = typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+    out[key] = { value, ...meta, in_official_aqi: false };
+  }
+  return out;
+}
+
+module.exports = {
+  calculateAQI, sanitizePollutants, subIndex, aqiCategory, BREAKPOINTS,
+  informationalReadings, INFORMATIONAL_CHANNELS,
+};
