@@ -314,7 +314,8 @@ export default function App() {
       <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
           meta="Auto-calculated from live data" style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
-          <PlumeVisualizer latest={latest} onResult={setPlumeResult} />
+          <PlumeVisualizer latest={latest} onResult={setPlumeResult}
+            stationLocation={stations.find((s) => s.station_id === selected)?.location} />
         </FullscreenCard>
       </div>
     </div>

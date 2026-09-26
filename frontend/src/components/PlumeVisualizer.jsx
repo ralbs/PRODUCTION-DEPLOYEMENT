@@ -2,6 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { api } from "../api";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { pm25ToRgb } from "../lib/aqiColor";
+import { downwindBearing, compassPoint } from "../lib/wind";
+
+// Open-Meteo's current conditions update every 15 min (ctm-core/met/live_wind.py).
+const WIND_REFRESH_MIN = 15;
 
 const STABILITY_LABELS = {
   A: "Very Unstable — strong daytime sun, light wind",
@@ -32,18 +36,50 @@ function legendGradientCss(maxC) {
     .join(", ");
 }
 
-export default function PlumeVisualizer({ latest, onResult }) {
+export default function PlumeVisualizer({ latest, stationLocation, onResult }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
+  // Live model-nowcast wind for the station's real coordinates, from
+  // GET /api/wind/live. { status: "loading"|"ok"|"unavailable", data }.
+  // The board has no wind sensor and telemetry carries no wind field, so
+  // this is the ONLY wind source -- if it fails there is deliberately no
+  // default-city fallback; the panel shows its no-data state instead.
+  const [wind, setWind] = useState({ status: "loading", data: null });
 
-  // Auto-derive parameters from sensor data
+  const lat = stationLocation?.lat, lon = stationLocation?.lon;
+  useEffect(() => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      setWind({ status: "unavailable", data: null });
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await api.getLiveWind(lat, lon);
+        if (!cancelled) setWind({ status: "ok", data });
+      } catch {
+        if (!cancelled) setWind({ status: "unavailable", data: null });
+      }
+    };
+    setWind({ status: "loading", data: null });
+    load();
+    const t = setInterval(load, WIND_REFRESH_MIN * 60 * 1000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [lat, lon]);
+
+  const windOk = wind.status === "ok";
+  // A Gaussian plume is undefined in calm air (u is in the denominator), so a
+  // real 0 m/s reading is reported as calm, not replaced with a guess.
+  const calm = windOk && !(wind.data.speed_m_s > 0);
+
+  // Auto-derive parameters from sensor data + live wind
   const params = useMemo(() => {
+    if (!windOk || calm) return null;
     const pollutants = latest?.pollutants || {};
-    const weather = latest?.weather || {};
 
     const pm25 = pollutants.pm2_5 || 0;
-    const windSpeed = weather.windSpeed || 3; // default Bangalore urban
+    const windSpeed = wind.data.speed_m_s;
     const isDaytime = (() => {
       const h = new Date().getHours();
       return h >= 6 && h < 18;
@@ -59,15 +95,16 @@ export default function PlumeVisualizer({ latest, onResult }) {
     // Max distance: scale with wind speed
     const maxDistance = Math.min(10000, Math.max(3000, windSpeed * 2000));
 
-    // Wind direction: use 270° (W) as default for Bangalore
-    const windDir = 270;
+    // The plume grid wants the bearing the plume TRAVELS toward; the API
+    // gives where the wind comes FROM. See lib/wind.js.
+    const windDir = downwindBearing(wind.data.dir_from_deg);
 
     return { Q: +Q.toFixed(3), u: windSpeed, H, isDaytime, windDir, maxDistance };
-  }, [latest?.pollutants, latest?.weather]);
+  }, [latest?.pollutants, windOk, calm, wind.data]);
 
   // Auto-calculate whenever params change
   useEffect(() => {
-    if (!latest?.pollutants) { setResult(null); onResult?.(null); return; }
+    if (!latest?.pollutants || !params) { setResult(null); onResult?.(null); return; }
 
     let cancelled = false;
     async function run() {
@@ -95,10 +132,9 @@ export default function PlumeVisualizer({ latest, onResult }) {
     run();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onResult is a setState from App.jsx, stable per render cycle, not a real dep
-  }, [latest?.pollutants, latest?.weather, params]);
+  }, [latest?.pollutants, params]);
 
   const pm25 = latest?.pollutants?.pm2_5;
-  const wind = latest?.weather?.windSpeed;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minHeight: 380 }}>
@@ -127,19 +163,25 @@ export default function PlumeVisualizer({ latest, onResult }) {
             Auto-Calculated from Live Data
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <ParamItem label="Wind Speed" value={`${params.u} m/s`} sub={
-              /* PROMPT_FLOW_UI.md Phase U2: structural measured/estimated
-                 treatment, replacing the plain "From sensor"/"Default (no
-                 sensor)" caption Phase U0 flagged as the exact anti-pattern
-                 root CLAUDE.md warns against. No cadenceMinutes -- telemetry
-                 arrival isn't on a fixed schedule the way a worker poll is,
-                 so ConfidenceBadge's "omit next-expected gracefully" path
-                 is exercised here for real. */
-              <ConfidenceBadge state={wind ? "measured" : "estimated"} timestamp={latest?.timestamp} />
-            } />
-            <ParamItem label="Source Height" value={`${params.H} m`} sub="Urban average" />
-            <ParamItem label="Emission Rate" value={`${params.Q} g/s`} sub={`From PM2.5: ${pm25 ?? "–"} µg/m³`} />
-            <ParamItem label="Time of Day" value={params.isDaytime ? "Daytime" : "Night"} sub="Affects air stability" />
+            <ParamItem
+              label="Wind"
+              value={windOk
+                ? `${wind.data.speed_m_s} m/s from ${compassPoint(wind.data.dir_from_deg)}`
+                : wind.status === "loading" ? "Loading…" : "No data"}
+              sub={
+                /* Confidence treatment (root CLAUDE.md): a live NWP model
+                   nowcast is ESTIMATED, never "measured" -- the same mapping
+                   SourceDirectionPanel uses for live_model_nowcast -- and its
+                   age comes from the provider's own as_of, with Open-Meteo's
+                   15-min update cadence as next-expected. */
+                windOk
+                  ? <ConfidenceBadge state="estimated" label="MODEL NOWCAST WIND"
+                      timestamp={wind.data.as_of} cadenceMinutes={WIND_REFRESH_MIN} />
+                  : <ConfidenceBadge state="estimated" label={wind.status === "loading" ? "FETCHING WIND" : "NO LIVE WIND"} />
+              } />
+            <ParamItem label="Source Height" value={params ? `${params.H} m` : "–"} sub="Urban average" />
+            <ParamItem label="Emission Rate" value={params ? `${params.Q} g/s` : "–"} sub={`From PM2.5: ${pm25 ?? "–"} µg/m³`} />
+            <ParamItem label="Time of Day" value={params ? (params.isDaytime ? "Daytime" : "Night") : "–"} sub="Affects air stability" />
           </div>
         </div>
 
@@ -209,6 +251,17 @@ export default function PlumeVisualizer({ latest, onResult }) {
           </div>
         ) : error ? (
           <span style={{ color: "#ef4444", fontSize: 12 }}>{error}</span>
+        ) : wind.status === "unavailable" ? (
+          <span style={{ color: "var(--text-sub)", fontSize: 12, lineHeight: 1.7 }}>
+            Live wind is unavailable, so no dispersion estimate is shown. This panel
+            never substitutes a default wind: a plume drawn from a guessed wind
+            would point in a made-up direction.
+          </span>
+        ) : calm ? (
+          <span style={{ color: "var(--text-sub)", fontSize: 12, lineHeight: 1.7 }}>
+            Calm air (0 m/s) right now. The Gaussian plume model is undefined without
+            wind, so no dispersion estimate is shown.
+          </span>
         ) : !result ? (
           <span style={{ color: "var(--text-dim)", fontSize: 12, lineHeight: 1.7 }}>
             {latest?.pollutants
