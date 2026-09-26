@@ -4,6 +4,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import { pm25ToRgb } from "../lib/aqiColor";
 import { downwindBearing, compassPoint } from "../lib/wind";
 import { WIND_REFRESH_MIN } from "../lib/useLiveWind";
+import { plumeCardMeta } from "../lib/plumeCardMeta";
 
 const STABILITY_LABELS = {
   A: "Very Unstable — strong daytime sun, light wind",
@@ -135,8 +136,11 @@ export default function PlumeVisualizer({ latest, wind = { status: "loading", da
           padding: "12px 14px", borderRadius: 10,
           background: "rgba(0,229,160,0.05)", border: "1px solid rgba(0,229,160,0.12)",
         }}>
+          {/* Same caption as the card header (lib/plumeCardMeta.js) -- the
+              fixed "Auto-Calculated from Live Data" sat above "No data"
+              whenever live wind was unavailable. */}
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--accent)", marginBottom: 8 }}>
-            Auto-Calculated from Live Data
+            {plumeCardMeta(wind, latest)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <ParamItem

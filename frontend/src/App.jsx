@@ -19,6 +19,7 @@ import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import HealthIntelligencePanel from "./components/HealthIntelligencePanel";
 import SourceDirectionPanel   from "./components/SourceDirectionPanel";
 import { useLiveWind } from "./lib/useLiveWind";
+import { plumeCardMeta } from "./lib/plumeCardMeta";
 
 const REFRESH_MS  = 60_000;
 const FORECAST_MS = 5 * 60_000;
@@ -317,7 +318,7 @@ export default function App() {
       {/* Pollution Spread */}
       <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
-          meta="Auto-calculated from live data" style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
+          meta={plumeCardMeta(liveWind, latest)} style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
           <PlumeVisualizer latest={latest} wind={liveWind} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
