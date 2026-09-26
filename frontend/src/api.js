@@ -24,7 +24,7 @@ export const api = {
   getForecast:   (id)                => get(`/api/forecast?station_id=${encodeURIComponent(id)}`),
   getSourceDirection: (id)           => get(`/api/source-direction/latest?station_id=${encodeURIComponent(id)}`),
   estimatePlume: (body)              => post("/api/plume/estimate", { ...body, grid: true }),
-  getLiveWind:   (lat, lon)          => get(`/api/wind/live?lat=${lat}&lon=${lon}`),
+  getWind:       (lat, lon)          => get(`/api/wind?lat=${lat}&lon=${lon}`),
 };
 
 // Unit helpers — the firmware already ships every gas channel in µg/m³ and the

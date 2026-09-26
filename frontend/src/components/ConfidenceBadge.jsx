@@ -84,12 +84,21 @@ const ICONS = {
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
     </svg>
   ),
+  // No value exists at all -- distinct from "estimated" (a value that was
+  // really computed, just not measured). Showing "estimated" when nothing
+  // was estimated would itself misstate provenance.
+  unavailable: (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M5.6 18.4L18.4 5.6" />
+    </svg>
+  ),
 };
 
-const DEFAULT_LABELS = { measured: "MEASURED", estimated: "ESTIMATED", stale: "STALE" };
+const DEFAULT_LABELS = { measured: "MEASURED", estimated: "ESTIMATED", stale: "STALE", unavailable: "NO DATA" };
 
 /**
- * @param {"measured"|"estimated"} state - the value's real provenance
+ * @param {"measured"|"estimated"|"unavailable"} state - the value's real provenance ("unavailable": no value exists)
  * @param {string|Date} timestamp - when the value was produced/observed
  * @param {number} [cadenceMinutes] - expected update interval, if any; enables "next in ~..." and stale detection
  * @param {number} [staleAfterMinutes] - explicit override for the stale threshold instead of deriving from cadenceMinutes

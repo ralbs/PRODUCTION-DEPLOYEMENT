@@ -18,6 +18,7 @@ import AlertToast        from "./components/AlertToast";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import HealthIntelligencePanel from "./components/HealthIntelligencePanel";
 import SourceDirectionPanel   from "./components/SourceDirectionPanel";
+import { useLiveWind } from "./lib/useLiveWind";
 
 const REFRESH_MS  = 60_000;
 const FORECAST_MS = 5 * 60_000;
@@ -209,18 +210,21 @@ export default function App() {
   const stationName = selected?.replace("KSPCB-", "") ?? "–";
   const currentCat  = latest?.aqi?.category;
 
-  // PROMPT_FLOW_UI.md Phase U5's ambient wind field. The only real, live
-  // wind (speed + direction, from ctm-core/met/live_wind.py) that reaches
-  // the frontend end-to-end today rides on the SourceDirection document's
-  // `wind` sub-object -- a general per-station telemetry.weather.windSpeed
-  // field doesn't exist on the real schema (backend/models/Telemetry.js).
-  // That document only exists when the worker's real statistical-spike
-  // trigger fires (~14% of hours per PROMPT_FLOW_INTEGRATION.md's Phase
-  // I3 finding), so `hasWind` is false, and this renders at opacity 0,
-  // most of the time -- expected, not a bug; never fabricate a bearing to
-  // fill that gap.
+  // Live wind for the selected station's real coordinates (GET /api/wind,
+  // same shape as SourceDirection's `wind`). Fetched once here and shared by
+  // the ambient field, PlumeVisualizer and the Ventilation Index, so they
+  // can't disagree about the wind.
+  const liveWind = useLiveWind(stations.find((s) => s.station_id === selected)?.location);
+
+  // PROMPT_FLOW_UI.md Phase U5's ambient wind field. It used to read wind
+  // only from a SourceDirection document, which exists only after a real
+  // spike -- so for any station without a recent spike it sat at opacity 0
+  // permanently. It now uses the station's live wind, independent of any
+  // estimate. Opacity still encodes provenance: 0.4 for a model nowcast
+  // (live_model_nowcast), 1 for real ground-station wind, 0 when there is
+  // no wind at all -- never a fabricated bearing.
   const ambientStyle = useMemo(() => {
-    const wind = sourceDirection.status === "ok" ? sourceDirection.doc?.wind : null;
+    const wind = liveWind.status === "ok" ? liveWind.data : null;
     const hasWind = wind?.speed_m_s != null && wind?.dir_from_deg != null;
     const [r, g, b] = aqiToRgb(latest?.aqi?.aqi) || [0, 0, 0];
     return {
@@ -231,7 +235,7 @@ export default function App() {
         ? 0
         : wind.source_tier === "historical_ground_station" ? 1 : 0.4,
     };
-  }, [sourceDirection, latest?.aqi?.aqi]);
+  }, [liveWind, latest?.aqi?.aqi]);
 
   return (
     <div className="app-shell">
@@ -296,7 +300,7 @@ export default function App() {
       <div className="section-pad" style={{ marginBottom: 20 }}>
         <FullscreenCard title="Health Intelligence" icon={<HealthIcon />}
           meta="Peer-reviewed indices" bodyStyle={{ padding: 0 }}>
-          <HealthIntelligencePanel latest={latest} forecast={forecast} />
+          <HealthIntelligencePanel latest={latest} forecast={forecast} wind={liveWind} />
         </FullscreenCard>
       </div>
 
@@ -314,8 +318,7 @@ export default function App() {
       <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
           meta="Auto-calculated from live data" style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
-          <PlumeVisualizer latest={latest} onResult={setPlumeResult}
-            stationLocation={stations.find((s) => s.station_id === selected)?.location} />
+          <PlumeVisualizer latest={latest} wind={liveWind} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
     </div>

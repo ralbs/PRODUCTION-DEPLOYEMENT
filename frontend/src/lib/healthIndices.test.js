@@ -26,3 +26,21 @@ test("PM2.5 is NOT converted (Stieb's PM2.5 coefficient is per µg/m³)", () => 
   // (1000/10.4) × (exp(0.000487 × 35) − 1) = 1.653 -> 1.7
   assert.equal(calcAQHI({ pm2_5: 35, no2: 0, o3: 0 }), 1.7);
 });
+
+import { calcVI } from "./healthIndices.js";
+
+test("Ventilation Index is null -- not 0 / 'Poor' -- when any input is missing", () => {
+  // Today's real situation: live wind speed exists, boundary-layer height has no source.
+  assert.equal(calcVI(undefined, 4.63), null);
+  assert.equal(calcVI(null, 4.63), null);
+  assert.equal(calcVI(1000, undefined), null);
+  assert.equal(calcVI(undefined, undefined), null);
+  assert.equal(calcVI(NaN, 4.63), null);
+  assert.equal(calcVI(0, 4.63), null);
+});
+
+test("Ventilation Index still computes when both inputs are real", () => {
+  // (1000 m × 5 m/s) / 200 = 25; clamped at 100
+  assert.equal(calcVI(1000, 5), 25);
+  assert.equal(calcVI(2000, 20), 100);
+});

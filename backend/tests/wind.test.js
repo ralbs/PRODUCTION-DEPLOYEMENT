@@ -65,7 +65,7 @@ describe("fetchLiveWind (port of ctm-core/met/live_wind.py)", () => {
   });
 });
 
-describe("GET /api/wind/live", () => {
+describe("GET /api/wind", () => {
   const app = express();
   app.use("/api/wind", require("../routes/wind"));
   // The route calls the real fetchLiveWind, which uses global fetch: stub the
@@ -75,19 +75,44 @@ describe("GET /api/wind/live", () => {
 
   test("200: live wind labelled as a model nowcast, FROM-direction convention stated", async () => {
     global.fetch = okFetch(REAL_PAYLOAD);
-    const res = await request(app).get("/api/wind/live?lat=14.442&lon=79.986");
+    const res = await request(app).get("/api/wind?lat=14.442&lon=79.986");
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      speed_m_s: 4.63, dir_from_deg: 298, source_tier: "live_model_nowcast",
-      station_id: "open-meteo-live-nowcast", requested: { lat: 14.442, lon: 79.986 },
+      speed_m_s: 4.63, dir_from_deg: 298, as_of: "2026-09-26T09:15:00.000Z",
+      source_tier: "live_model_nowcast", station_id: "open-meteo-live-nowcast",
     });
-    expect(res.body.direction_convention).toMatch(/FROM-direction/);
     expect(res.body.source_label).toMatch(/NOT a ground-station reading/);
+    expect(res.body.meta).toMatchObject({ requested: { lat: 14.442, lon: 79.986 }, grid_lat: 14.446397 });
+    expect(res.body.meta.direction_convention).toMatch(/FROM-direction/);
+  });
+
+  test("top-level shape is EXACTLY SourceDirection's wind sub-object (read from the real schema)", async () => {
+    const SourceDirection = require("../models/SourceDirection");
+    const windKeys = Object.keys(SourceDirection.schema.paths)
+      .filter((p) => p.startsWith("wind."))
+      .map((p) => p.slice("wind.".length))
+      .sort();
+    expect(windKeys).toEqual(["as_of", "dir_from_deg", "source_label", "source_tier", "speed_m_s", "station_id"]);
+
+    global.fetch = okFetch(REAL_PAYLOAD);
+    const res = await request(app).get("/api/wind?lat=14.442&lon=79.986");
+    const { meta, ...shared } = res.body;
+    expect(Object.keys(shared).sort()).toEqual(windKeys);
+    expect(meta).toBeDefined();
+  });
+
+  test("/api/wind/live is the same handler (alias kept)", async () => {
+    global.fetch = okFetch(REAL_PAYLOAD);
+    const a = await request(app).get("/api/wind?lat=14.442&lon=79.986");
+    const b = await request(app).get("/api/wind/live?lat=14.442&lon=79.986");
+    expect(b.status).toBe(200);
+    expect(b.body).toEqual(a.body);
   });
 
   test("503 (no fallback wind) when the provider fails", async () => {
+    _cache.clear();
     global.fetch = async () => { throw new Error("down"); };
-    const res = await request(app).get("/api/wind/live?lat=14.442&lon=79.986");
+    const res = await request(app).get("/api/wind?lat=14.442&lon=79.986");
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("unavailable");
     expect(res.body).not.toHaveProperty("speed_m_s");
@@ -99,7 +124,7 @@ describe("GET /api/wind/live", () => {
     ["lat out of range", "lat=91&lon=79"],
     ["lon out of range", "lat=14&lon=181"],
   ])("400 on %s", async (_l, qs) => {
-    const res = await request(app).get(`/api/wind/live?${qs}`);
+    const res = await request(app).get(`/api/wind?${qs}`);
     expect(res.status).toBe(400);
   });
 });

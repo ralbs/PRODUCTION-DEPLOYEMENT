@@ -621,6 +621,12 @@ body {
   color: var(--poor); background: rgba(249,115,22,0.10);
   border: 1px solid rgba(249,115,22,0.3);
 }
+/* No value exists at all -- solid neutral outline + slashed-circle icon, so
+   it can't be mistaken for .estimated's dashed "real but modeled" look. */
+.confidence-badge.unavailable {
+  color: var(--text-sub); background: transparent;
+  border: 1px solid var(--border);
+}
 .confidence-badge-icon { display: flex; flex-shrink: 0; }
 
 /* ──────────────────────────────── RESPONSIVE ── */

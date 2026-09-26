@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import ConfidenceBadge from "./ConfidenceBadge";
 import {
   computeAllIndices, riskLevel, cardiovascularRisk, respiratoryRisk,
   cpmContribution, CRP_REFERENCE,
@@ -51,13 +52,17 @@ function Card({ label, value, unit, sub, color, tip }) {
   );
 }
 
-export default function HealthIntelligencePanel({ latest, forecast }) {
+// `wind` is App.jsx's shared live-wind state (lib/useLiveWind.js). Telemetry
+// has no wind field, so live wind speed is merged in here for the
+// Ventilation Index. BLH still has no source, so VI stays null (see calcVI).
+export default function HealthIntelligencePanel({ latest, forecast, wind }) {
+  const windSpeed = wind?.status === "ok" ? wind.data.speed_m_s : undefined;
   const indices = useMemo(() => {
     if (!latest?.pollutants) return null;
-    return computeAllIndices(latest.pollutants, latest.weather || {},
+    return computeAllIndices(latest.pollutants, { ...(latest.weather || {}), windSpeed },
       forecast ? { aqi: forecast?.current_aqi?.aqi } : null,
       latest?.aqi?.aqi ?? null);
-  }, [latest?.pollutants, latest?.weather, forecast]);
+  }, [latest?.pollutants, latest?.weather, forecast, windSpeed]);
 
   const contributions = useMemo(() => {
     if (!latest?.pollutants) return [];
@@ -173,17 +178,36 @@ export default function HealthIntelligencePanel({ latest, forecast }) {
             <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 8 }}>
               How well the atmosphere disperses pollution
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ fontSize: 22, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text)" }}>
-                {indices.vi}<span style={{ fontSize: 10, color: "var(--text-dim)" }}>%</span>
+            {indices.vi == null ? (
+              /* VI = boundary-layer height × wind speed. Missing inputs are
+                 shown as missing -- never computed as 0 with a "Poor" verdict. */
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div>
+                  <ConfidenceBadge state="unavailable" label="UNAVAILABLE" />
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text-sub)", lineHeight: 1.6 }}>
+                  Needs boundary-layer height × wind speed.{" "}
+                  Wind speed: <strong style={{ color: "var(--text)" }}>
+                    {windSpeed != null ? `${windSpeed} m/s (live model nowcast)` : "unavailable"}
+                  </strong>.{" "}
+                  Boundary-layer height: <strong style={{ color: "var(--text)" }}>no data source in this system</strong>.
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <HBar value={indices.vi} color={indices.vi > 50 ? "#22c55e" : indices.vi > 25 ? "#facc15" : "#ef4444"} />
-              </div>
-            </div>
-            <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 4 }}>
-              {indices.vi > 50 ? "Good — pollutants disperse quickly." : indices.vi > 25 ? "Moderate — some trapping possible." : "Poor — pollution accumulates near ground."}
-            </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ fontSize: 22, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text)" }}>
+                    {indices.vi}<span style={{ fontSize: 10, color: "var(--text-dim)" }}>%</span>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <HBar value={indices.vi} color={indices.vi > 50 ? "#22c55e" : indices.vi > 25 ? "#facc15" : "#ef4444"} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 4 }}>
+                  {indices.vi > 50 ? "Good — pollutants disperse quickly." : indices.vi > 25 ? "Moderate — some trapping possible." : "Poor — pollution accumulates near ground."}
+                </div>
+              </>
+            )}
           </div>
 
           <div style={{ height: 1, background: "var(--border)" }} />

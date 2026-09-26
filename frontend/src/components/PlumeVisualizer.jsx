@@ -3,9 +3,7 @@ import { api } from "../api";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { pm25ToRgb } from "../lib/aqiColor";
 import { downwindBearing, compassPoint } from "../lib/wind";
-
-// Open-Meteo's current conditions update every 15 min (ctm-core/met/live_wind.py).
-const WIND_REFRESH_MIN = 15;
+import { WIND_REFRESH_MIN } from "../lib/useLiveWind";
 
 const STABILITY_LABELS = {
   A: "Very Unstable — strong daytime sun, light wind",
@@ -36,37 +34,15 @@ function legendGradientCss(maxC) {
     .join(", ");
 }
 
-export default function PlumeVisualizer({ latest, stationLocation, onResult }) {
+// `wind` is App.jsx's shared live-wind state (lib/useLiveWind.js):
+// { status: "loading"|"ok"|"unavailable", data } with data in the
+// SourceDirection wind shape. The board has no wind sensor and telemetry
+// carries no wind field, so this is the ONLY wind source -- if it's
+// unavailable there is deliberately no default-city fallback.
+export default function PlumeVisualizer({ latest, wind = { status: "loading", data: null }, onResult }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
-  // Live model-nowcast wind for the station's real coordinates, from
-  // GET /api/wind/live. { status: "loading"|"ok"|"unavailable", data }.
-  // The board has no wind sensor and telemetry carries no wind field, so
-  // this is the ONLY wind source -- if it fails there is deliberately no
-  // default-city fallback; the panel shows its no-data state instead.
-  const [wind, setWind] = useState({ status: "loading", data: null });
-
-  const lat = stationLocation?.lat, lon = stationLocation?.lon;
-  useEffect(() => {
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      setWind({ status: "unavailable", data: null });
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const data = await api.getLiveWind(lat, lon);
-        if (!cancelled) setWind({ status: "ok", data });
-      } catch {
-        if (!cancelled) setWind({ status: "unavailable", data: null });
-      }
-    };
-    setWind({ status: "loading", data: null });
-    load();
-    const t = setInterval(load, WIND_REFRESH_MIN * 60 * 1000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [lat, lon]);
 
   const windOk = wind.status === "ok";
   // A Gaussian plume is undefined in calm air (u is in the denominator), so a
@@ -177,7 +153,11 @@ export default function PlumeVisualizer({ latest, stationLocation, onResult }) {
                 windOk
                   ? <ConfidenceBadge state="estimated" label="MODEL NOWCAST WIND"
                       timestamp={wind.data.as_of} cadenceMinutes={WIND_REFRESH_MIN} />
-                  : <ConfidenceBadge state="estimated" label={wind.status === "loading" ? "FETCHING WIND" : "NO LIVE WIND"} />
+                  // Nothing was estimated here, so never an "estimated" badge:
+                  // no badge while loading, the distinct no-data state after.
+                  : wind.status === "unavailable"
+                    ? <ConfidenceBadge state="unavailable" label="NO LIVE WIND" />
+                    : null
               } />
             <ParamItem label="Source Height" value={params ? `${params.H} m` : "–"} sub="Urban average" />
             <ParamItem label="Emission Rate" value={params ? `${params.Q} g/s` : "–"} sub={`From PM2.5: ${pm25 ?? "–"} µg/m³`} />

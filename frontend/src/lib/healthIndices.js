@@ -232,10 +232,18 @@ export function ppiInterpretation(ppi) {
 //     Reference: WMO Guide, Arya SP 1999
 //     Clamped to 0–100 scale using typical urban BLH range (0–2000m) and
 //     wind speed (0–10 m/s), so VI_max ≈ 20000.
+//     Returns null -- NOT 0 -- unless BOTH inputs are real positive numbers.
+//     The old `(blh || 0) * (ws || 0)` turned a missing input into VI 0 and a
+//     confident "Poor — pollution accumulates near ground" verdict computed
+//     from nothing. BLH has no live source anywhere in this system (wind speed
+//     now comes from GET /api/wind), so today this is always null: a disclosed
+//     limitation, not a partial index.
 // ─────────────────────────────────────────────────────────────────────────────
+const isRealPositive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+
 export function calcVI(blh, ws) {
-  const raw = (blh || 0) * (ws || 0);
-  return Math.max(0, Math.min(100, +(raw / 200).toFixed(1)));
+  if (!isRealPositive(blh) || !isRealPositive(ws)) return null;
+  return Math.max(0, Math.min(100, +((blh * ws) / 200).toFixed(1)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
