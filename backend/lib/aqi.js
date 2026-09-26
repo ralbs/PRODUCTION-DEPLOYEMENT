@@ -173,10 +173,18 @@ function subIndex(pollutant, concentration) {
   const table = BREAKPOINTS[pollutant];
   if (!table) return null;
 
-  for (const [bLo, bHi, iLo, iHi] of table) {
+  for (let k = 0; k < table.length; k++) {
+    const [bLo, bHi, iLo, iHi] = table[k];
     if (concentration >= bLo && concentration <= bHi) {
       return Math.round(((iHi - iLo) / (bHi - bLo)) * (concentration - bLo) + iLo);
     }
+    // The published bands leave a one-unit gap between them (PM2.5 0-30
+    // then 31-60; CO 1.0 then 1.1). A reading strictly inside a gap (e.g.
+    // PM2.5 30.5) belongs to the LOWER band -- the same result as
+    // truncating to the table's precision first. Without this it matched
+    // no band, returned null, and silently dropped out of the AQI max().
+    const next = table[k + 1];
+    if (next && concentration > bHi && concentration < next[0]) return iHi;
   }
   // Above the top published band — cap at the CPCB AQI maximum of 500 rather
   // than extrapolating unbounded (which let a garbage reading produce AQI ~30M).
