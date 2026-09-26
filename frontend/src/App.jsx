@@ -217,6 +217,12 @@ export default function App() {
   // can't disagree about the wind.
   const liveWind = useLiveWind(stations.find((s) => s.station_id === selected)?.location);
 
+  // The Pollution Dispersion caption is computed ONCE, here, and the same
+  // string is handed to both places that show it (the card header and
+  // PlumeVisualizer's params box) -- one value, not two call sites that
+  // could be given different inputs and drift apart.
+  const plumeCaption = plumeCardMeta(liveWind, latest);
+
   // PROMPT_FLOW_UI.md Phase U5's ambient wind field. It used to read wind
   // only from a SourceDirection document, which exists only after a real
   // spike -- so for any station without a recent spike it sat at opacity 0
@@ -318,8 +324,8 @@ export default function App() {
       {/* Pollution Spread */}
       <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
-          meta={plumeCardMeta(liveWind, latest)} style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
-          <PlumeVisualizer latest={latest} wind={liveWind} onResult={setPlumeResult} />
+          meta={plumeCaption} style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
+          <PlumeVisualizer latest={latest} wind={liveWind} caption={plumeCaption} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
     </div>

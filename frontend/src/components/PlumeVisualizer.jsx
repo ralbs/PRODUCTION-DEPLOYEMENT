@@ -4,7 +4,6 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import { pm25ToRgb } from "../lib/aqiColor";
 import { downwindBearing, compassPoint } from "../lib/wind";
 import { WIND_REFRESH_MIN } from "../lib/useLiveWind";
-import { plumeCardMeta } from "../lib/plumeCardMeta";
 
 const STABILITY_LABELS = {
   A: "Very Unstable — strong daytime sun, light wind",
@@ -40,7 +39,7 @@ function legendGradientCss(maxC) {
 // SourceDirection wind shape. The board has no wind sensor and telemetry
 // carries no wind field, so this is the ONLY wind source -- if it's
 // unavailable there is deliberately no default-city fallback.
-export default function PlumeVisualizer({ latest, wind = { status: "loading", data: null }, onResult }) {
+export default function PlumeVisualizer({ latest, wind = { status: "loading", data: null }, caption, onResult }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [result,  setResult]  = useState(null);
@@ -136,11 +135,12 @@ export default function PlumeVisualizer({ latest, wind = { status: "loading", da
           padding: "12px 14px", borderRadius: 10,
           background: "rgba(0,229,160,0.05)", border: "1px solid rgba(0,229,160,0.12)",
         }}>
-          {/* Same caption as the card header (lib/plumeCardMeta.js) -- the
-              fixed "Auto-Calculated from Live Data" sat above "No data"
-              whenever live wind was unavailable. */}
+          {/* `caption` is the exact string App.jsx computed once and also
+              shows in the card header -- this component never derives it
+              itself. (It used to be a fixed "Auto-Calculated from Live
+              Data", shown above "No data" when live wind was unavailable.) */}
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--accent)", marginBottom: 8 }}>
-            {plumeCardMeta(wind, latest)}
+            {caption}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <ParamItem
