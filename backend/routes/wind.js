@@ -1,5 +1,5 @@
 const express = require("express");
-const { fetchLiveWind, LIVE_WIND_STATION_ID } = require("../lib/liveWind");
+const { fetchLiveWindDetailed, LIVE_WIND_STATION_ID } = require("../lib/liveWind");
 const { WIND_SOURCE_LABELS } = require("../lib/windSource");
 
 const router = express.Router();
@@ -20,8 +20,9 @@ const router = express.Router();
  * shared shape stays identical.
  *
  * 400 -> lat/lon missing or out of range
- * 503 -> provider unreachable or returned nothing usable. Deliberately no
- *        fallback wind: the caller shows its no-data state instead.
+ * 503 -> provider unreachable or returned nothing usable, with a short
+ *        `reason` code (see lib/liveWind.js). Deliberately no fallback
+ *        wind: the caller shows its no-data state instead.
  */
 async function handler(req, res) {
   const lat = Number(req.query.lat);
@@ -32,9 +33,10 @@ async function handler(req, res) {
   }
 
   try {
-    const wind = await fetchLiveWind(lat, lon);
+    const { value: wind, reason } = await fetchLiveWindDetailed(lat, lon);
     if (!wind) {
-      return res.status(503).json({ error: "Live wind unavailable -- provider unreachable or returned no usable reading", status: "unavailable" });
+      console.warn(`[wind] live wind unavailable for ${lat},${lon}: ${reason}`);
+      return res.status(503).json({ error: "Live wind unavailable -- provider unreachable or returned no usable reading", status: "unavailable", reason });
     }
     res.json({
       speed_m_s: wind.speed_m_s,

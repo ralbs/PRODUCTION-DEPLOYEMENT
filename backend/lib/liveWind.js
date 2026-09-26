@@ -43,39 +43,60 @@ function buildUrl(lat, lon) {
 /**
  * @returns {Promise<null | {speed_m_s, dir_from_deg, as_of, grid_lat, grid_lon}>}
  */
-async function fetchLiveWind(lat, lon, { fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+async function fetchLiveWind(lat, lon, opts) {
+  return (await fetchLiveWindDetailed(lat, lon, opts)).value;
+}
+
+/**
+ * Same as fetchLiveWind, but also says WHY there's no value, as a short
+ * fixed code (never a secret, never a raw provider body) -- so a failure in
+ * production is diagnosable from the route's 503 and the server log instead
+ * of being an indistinguishable null.
+ * @returns {Promise<{value: object|null, reason: string|null}>}
+ */
+async function fetchLiveWindDetailed(lat, lon, { fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+  const fail = (reason) => ({ value: null, reason });
   const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { value: hit.value, reason: null };
+
+  // Global fetch only exists on Node >= 18.
+  if (typeof fetchImpl !== "function") return fail(`fetch_unavailable (node ${process.version})`);
 
   let payload;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetchImpl(buildUrl(lat, lon), { signal: ctrl.signal });
-    if (!res.ok) return null;
-    payload = await res.json();
-  } catch {
-    return null; // network error, timeout, or non-JSON body
+    if (!res.ok) return fail(`provider_http_${res.status}`);
+    try {
+      payload = await res.json();
+    } catch {
+      return fail("provider_non_json");
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return fail(`timeout_${timeoutMs}ms`);
+    const code = err?.cause?.code || err?.code || err?.name || "unknown";
+    return fail(`network_error_${code}`);
   } finally {
     clearTimeout(timer);
   }
 
   const cur = payload?.current;
   const units = payload?.current_units;
-  if (!cur || typeof cur.time !== "string") return null;
+  if (!cur || typeof cur.time !== "string") return fail("payload_missing_current");
   // Guard the units contract rather than trusting the request param alone.
-  if (units && units.wind_speed_10m && units.wind_speed_10m !== "m/s") return null;
+  if (units && units.wind_speed_10m && units.wind_speed_10m !== "m/s") return fail("payload_wrong_speed_unit");
 
   const speed = Number(cur.wind_speed_10m);
   const dir = Number(cur.wind_direction_10m);
-  if (cur.wind_speed_10m == null || cur.wind_direction_10m == null) return null;
-  if (!Number.isFinite(speed) || !Number.isFinite(dir)) return null;
-  if (speed < 0 || dir < 0 || dir > 360) return null;
+  if (cur.wind_speed_10m == null || cur.wind_direction_10m == null) return fail("payload_missing_wind");
+  if (!Number.isFinite(speed) || !Number.isFinite(dir)) return fail("payload_non_finite");
+  if (speed < 0 || dir < 0 || dir > 360) return fail("payload_out_of_range");
 
   // timezone=UTC returns naive "YYYY-MM-DDTHH:MM" -- mark it UTC explicitly.
   const asOf = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(cur.time) ? cur.time : `${cur.time}Z`);
-  if (Number.isNaN(asOf.getTime())) return null;
+  if (Number.isNaN(asOf.getTime())) return fail("payload_bad_time");
 
   const value = {
     speed_m_s: speed,
@@ -85,7 +106,10 @@ async function fetchLiveWind(lat, lon, { fetchImpl = globalThis.fetch, timeoutMs
     grid_lon: Number.isFinite(payload.longitude) ? payload.longitude : null,
   };
   cache.set(key, { at: Date.now(), value }); // successes only; failures are retried
-  return value;
+  return { value, reason: null };
 }
 
-module.exports = { fetchLiveWind, buildUrl, LIVE_WIND_BASE_URL, LIVE_WIND_STATION_ID, _cache: cache };
+module.exports = {
+  fetchLiveWind, fetchLiveWindDetailed, buildUrl,
+  LIVE_WIND_BASE_URL, LIVE_WIND_STATION_ID, _cache: cache,
+};

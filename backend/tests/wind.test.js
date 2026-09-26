@@ -1,6 +1,9 @@
 const express = require("express");
 const request = require("supertest");
-const { fetchLiveWind, buildUrl, _cache } = require("../lib/liveWind");
+const { fetchLiveWind, fetchLiveWindDetailed, buildUrl, _cache } = require("../lib/liveWind");
+// Loaded at module scope (it pulls in Mongoose): requiring it inside a test
+// put a cold module load inside that test's 5s timeout.
+const SourceDirection = require("../models/SourceDirection");
 
 // A real Open-Meteo response shape, values from a live call for NEL-001
 // (14.442, 79.986) on 2026-09-26: current.time 09:15 UTC, 4.63 m/s from 298.
@@ -87,7 +90,6 @@ describe("GET /api/wind", () => {
   });
 
   test("top-level shape is EXACTLY SourceDirection's wind sub-object (read from the real schema)", async () => {
-    const SourceDirection = require("../models/SourceDirection");
     const windKeys = Object.keys(SourceDirection.schema.paths)
       .filter((p) => p.startsWith("wind."))
       .map((p) => p.slice("wind.".length))
@@ -109,13 +111,18 @@ describe("GET /api/wind", () => {
     expect(b.body).toEqual(a.body);
   });
 
-  test("503 (no fallback wind) when the provider fails", async () => {
+  test("503 (no fallback wind) when the provider fails, with a diagnosable reason", async () => {
     _cache.clear();
-    global.fetch = async () => { throw new Error("down"); };
+    const err = new TypeError("fetch failed"); err.cause = { code: "ENOTFOUND" };
+    global.fetch = async () => { throw err; };
+    jest.spyOn(console, "warn").mockImplementation(() => {});
     const res = await request(app).get("/api/wind?lat=14.442&lon=79.986");
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("unavailable");
+    expect(res.body.reason).toBe("network_error_ENOTFOUND");
     expect(res.body).not.toHaveProperty("speed_m_s");
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("network_error_ENOTFOUND"));
+    console.warn.mockRestore();
   });
 
   test.each([
@@ -126,5 +133,30 @@ describe("GET /api/wind", () => {
   ])("400 on %s", async (_l, qs) => {
     const res = await request(app).get(`/api/wind?${qs}`);
     expect(res.status).toBe(400);
+  });
+});
+
+describe("fetchLiveWindDetailed -- failure reasons", () => {
+  beforeEach(() => _cache.clear());
+
+  test.each([
+    ["no global fetch (Node < 18)", { fetchImpl: undefined, noFetch: true }, /^fetch_unavailable \(node v/],
+    ["HTTP 429 from the provider", { fetchImpl: async () => ({ ok: false, status: 429 }) }, /^provider_http_429$/],
+    ["non-JSON body", { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError("x"); } }) }, /^provider_non_json$/],
+    ["timeout", { fetchImpl: async () => { const e = new Error("aborted"); e.name = "AbortError"; throw e; } }, /^timeout_/],
+    ["missing current block", { fetchImpl: okFetch({}) }, /^payload_missing_current$/],
+  ])("%s -> value null, reason %p", async (_l, { fetchImpl, noFetch }, reasonRe) => {
+    const opts = noFetch ? { fetchImpl: null } : { fetchImpl };
+    const { value, reason } = await fetchLiveWindDetailed(14.442, 79.986, opts);
+    expect(value).toBeNull();
+    expect(reason).toMatch(reasonRe);
+  });
+
+  test("success -> reason null, value identical to fetchLiveWind", async () => {
+    const d = await fetchLiveWindDetailed(14.442, 79.986, { fetchImpl: okFetch(REAL_PAYLOAD) });
+    _cache.clear();
+    const v = await fetchLiveWind(14.442, 79.986, { fetchImpl: okFetch(REAL_PAYLOAD) });
+    expect(d.reason).toBeNull();
+    expect(d.value).toEqual(v);
   });
 });
