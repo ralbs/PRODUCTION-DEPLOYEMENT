@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { DEPLOYMENT } from "../lib/deployment";
 
 /* ── Live clock ── */
 function Clock() {
@@ -81,8 +82,8 @@ export default function Header({ voiceEnabled, onVoiceToggle }) {
       <div className="header-logo">
         <Logo />
         <div>
-          <div className="header-title">AQMS Bangalore</div>
-          <div className="header-sub">ISRO · KSPCB Real-time Air Quality Intelligence</div>
+          <div className="header-title">AQMS {DEPLOYMENT.city}</div>
+          <div className="header-sub">ISRO · Real-time Air Quality Intelligence</div>
         </div>
       </div>
 

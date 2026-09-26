@@ -29,7 +29,7 @@ export default function StationTable({ stations, stationsAQI, selected, onSelect
           </svg>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Station AQI</span>
         </div>
-        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>CPCB daily average · all stations</span>
+        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>Latest reading · all stations</span>
       </div>
 
       <table className="station-table">

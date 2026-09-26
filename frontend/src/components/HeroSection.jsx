@@ -1,3 +1,5 @@
+import { DEPLOYMENT } from "../lib/deployment";
+
 export default function HeroSection({ stations, selected, onSelect, aqi, onRunAnalysis }) {
   const value = aqi?.aqi;
   const cat   = aqi?.category;
@@ -15,14 +17,14 @@ export default function HeroSection({ stations, selected, onSelect, aqi, onRunAn
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
             </svg>
-            Bangalore, Karnataka
+            {DEPLOYMENT.city}, {DEPLOYMENT.region}
           </div>
           <h1 className="hero-heading">
             Air Quality<br />Intelligence
           </h1>
           <p className="hero-sub">
             Real-time health indices, AI forecast, and pollution dispersion
-            from the KSPCB monitoring network.
+            from this deployment's live sensor network.
           </p>
         </div>
 
