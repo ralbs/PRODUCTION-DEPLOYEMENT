@@ -1,5 +1,6 @@
 const express = require("express");
 const SourceDirection = require("../models/SourceDirection");
+const WorkerRun = require("../models/WorkerRun");
 const { WIND_SOURCE_TIERS, WIND_SOURCE_LABELS } = require("../lib/windSource");
 const { authenticateDevice } = require("../middleware/auth");
 
@@ -104,6 +105,73 @@ router.get("/latest", async (req, res) => {
   } catch (err) {
     console.error("[source-direction] latest lookup failed:", err.message);
     res.status(500).json({ error: "Failed to load source-direction estimate" });
+  }
+});
+
+// -------------------------------------------------------------------
+// Worker run records -- see models/WorkerRun.js for why these exist.
+// -------------------------------------------------------------------
+const MAX_REASON_LEN = 500;
+
+function validateRun(body) {
+  if (typeof body.station_id !== "string" || !body.station_id) return "station_id must be a non-empty string";
+  if (!WorkerRun.OUTCOMES.includes(body.outcome)) return `outcome must be one of: ${WorkerRun.OUTCOMES.join(", ")}`;
+  if (isNaN(new Date(body.ran_at).getTime())) return "ran_at is not a valid ISO date string";
+  for (const f of ["reason", "wind_failure_reason"]) {
+    if (body[f] != null && (typeof body[f] !== "string" || body[f].length > MAX_REASON_LEN)) {
+      return `${f} must be a string of at most ${MAX_REASON_LEN} chars`;
+    }
+  }
+  if (body.spike_detected != null && typeof body.spike_detected !== "boolean") return "spike_detected must be boolean or null";
+  if (body.spike_timestamp != null && isNaN(new Date(body.spike_timestamp).getTime())) return "spike_timestamp is not a valid ISO date string";
+  return null;
+}
+
+// POST /api/source-direction/runs -- the worker records EVERY run, skips
+// included. Same device auth as /ingest: an open write here would let
+// anyone forge "last run" status for a station.
+router.post("/runs", authenticateDevice, async (req, res) => {
+  const body = req.body || {};
+  const err = validateRun(body);
+  if (err) return res.status(400).json({ error: err });
+
+  try {
+    const doc = await WorkerRun.findOneAndUpdate(
+      { worker: "source-direction", station_id: body.station_id },
+      {
+        $set: {
+          worker: "source-direction",
+          station_id: body.station_id,
+          device_id: req.deviceId, // from auth, never the body
+          outcome: body.outcome,
+          reason: body.reason ?? null,
+          wind_failure_reason: body.wind_failure_reason ?? null,
+          spike_detected: body.spike_detected ?? null,
+          spike_timestamp: body.spike_timestamp ? new Date(body.spike_timestamp) : null,
+          ran_at: new Date(body.ran_at),
+        },
+      },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    res.status(201).json({ status: "success", id: doc._id });
+  } catch (e) {
+    console.error("[source-direction] run record failed:", e.message);
+    res.status(500).json({ error: "Failed to store worker run record" });
+  }
+});
+
+// GET /api/source-direction/last-run?station_id=NEL-001 -- auth-free read,
+// same pattern as /latest, stations.js and forecast.js.
+router.get("/last-run", async (req, res) => {
+  const { station_id } = req.query;
+  if (!station_id) return res.status(400).json({ error: "station_id query param required" });
+  try {
+    const doc = await WorkerRun.findOne({ worker: "source-direction", station_id }).lean();
+    if (!doc) return res.status(404).json({ error: "No worker run recorded for this station" });
+    res.json(doc);
+  } catch (e) {
+    console.error("[source-direction] last-run lookup failed:", e.message);
+    res.status(500).json({ error: "Failed to load worker run record" });
   }
 });
 

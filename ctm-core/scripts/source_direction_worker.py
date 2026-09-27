@@ -293,6 +293,51 @@ def post_source_direction(base_url: str, device_id: str, device_key: str, payloa
     )
 
 
+def build_run_record(result: dict, ran_at: datetime) -> dict:
+    """The "last run" record for one station (backend/models/WorkerRun.js),
+    built from process_station()'s result -- for EVERY outcome, skips
+    included. Before this, a skip left no trace, so on the dashboard "no
+    spike this hour" and "spike detected but the wind fetch failed
+    (provider_http_429)" looked identical."""
+    action = result.get("action")
+    if action in ("ingested", "skipped"):
+        outcome, reason = action, result.get("reason")
+    else:  # post_failed, or anything unexpected -- never disguised as a skip
+        outcome = "error"
+        reason = result.get("reason") or f"{action}: HTTP {result.get('status_code')}"
+    spike = result.get("spike")
+    spike_detected = bool(spike["is_spike"]) if spike else None
+    return {
+        "station_id": result["station_id"],
+        "outcome": outcome,
+        "reason": reason,
+        "wind_failure_reason": result.get("wind_failure_reason"),
+        "spike_detected": spike_detected,
+        "spike_timestamp": spike["timestamp"] if spike_detected else None,
+        "ran_at": ran_at.isoformat(),
+    }
+
+
+def post_run_record(base_url: str, device_id: str, device_key: str, record: dict) -> requests.Response:
+    """POST /api/source-direction/runs -- same device auth as the ingest
+    route (a run record is a write; it must not be forgeable)."""
+    headers = {"X-Device-Id": device_id, "X-Device-Key": device_key}
+    return _session.post(
+        f"{base_url}/api/source-direction/runs", json=record, headers=headers, timeout=REQUEST_TIMEOUT,
+    )
+
+
+def record_run(base_url: str, device_id: str, device_key: str, result: dict, ran_at: datetime) -> None:
+    """Best-effort: failing to RECORD a run must never fail the run itself,
+    so any error here is logged and swallowed."""
+    try:
+        resp = post_run_record(base_url, device_id, device_key, build_run_record(result, ran_at))
+        if not resp.ok:
+            print(f"[source-direction-worker] WARNING: run record not stored for {result.get('station_id')}: HTTP {resp.status_code}")
+    except Exception as exc:  # noqa: BLE001 -- deliberately best-effort
+        print(f"[source-direction-worker] WARNING: run record not stored for {result.get('station_id')}: {type(exc).__name__}: {exc}")
+
+
 def process_station(
     base_url: str, station: dict, city: CityConfig, device_id: str, device_key: str,
     as_of: datetime, lookback: int = 168, use_live_wind: bool = False,
@@ -437,11 +482,21 @@ def main() -> None:
     print(f"[source-direction-worker] {len(stations)} station(s) reported, {len(valid)} valid (have device_id + location)")
 
     for station in valid:
-        result = process_station(
-            args.base_url, station, city, args.device_id, args.device_key, as_of, args.lookback,
-            use_live_wind=use_live_wind,
-        )
+        ran_at = datetime.now(timezone.utc)
+        try:
+            result = process_station(
+                args.base_url, station, city, args.device_id, args.device_key, as_of, args.lookback,
+                use_live_wind=use_live_wind,
+            )
+        except Exception as exc:
+            # Record the crash so the dashboard shows "last run failed", then
+            # re-raise so the cron run itself still fails visibly.
+            reason = f"{type(exc).__name__}: {exc}"[:500]
+            record_run(args.base_url, args.device_id, args.device_key,
+                       {"station_id": station["station_id"], "action": "error", "reason": reason}, ran_at)
+            raise
         print(f"[source-direction-worker] {result}")
+        record_run(args.base_url, args.device_id, args.device_key, result, ran_at)
 
 
 if __name__ == "__main__":

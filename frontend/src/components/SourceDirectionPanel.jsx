@@ -1,5 +1,6 @@
 import ConfidenceBadge from "./ConfidenceBadge";
 import { isInconclusive } from "../lib/sourceDirection";
+import { describeLastRun, SOURCE_DIRECTION_CADENCE_MIN } from "../lib/lastRun";
 
 // PROMPT_FLOW_UI.md Phase U3 -- first real end-to-end use of ConfidenceBadge
 // on genuinely new data (Phase U2 was a retrofit onto an already-working
@@ -75,8 +76,10 @@ function CompassArrow({ bearingDeg, dashed }) {
 /**
  * @param state - { status: "idle"|"loading"|"ok"|"not_found"|"error", doc, error }
  *   `doc` is the real SourceDirection document from GET /api/source-direction/latest.
+ * @param lastRun - { status, doc } from GET /api/source-direction/last-run --
+ *   explains a missing estimate (see lib/lastRun.js).
  */
-export default function SourceDirectionPanel({ state }) {
+export default function SourceDirectionPanel({ state, lastRun }) {
   const { status, doc, error } = state;
 
   // --text-dim on --bg-card fails WCAG AA (2.19:1, needs 4.5:1) -- same
@@ -90,18 +93,11 @@ export default function SourceDirectionPanel({ state }) {
   }
 
   if (status === "not_found") {
-    // A real, expected, non-error state -- per PROMPT_FLOW_INTEGRATION.md's
-    // own disclosed finding, most real hours never produce an estimate at
-    // all (the worker only runs the tracer on a real statistical spike).
-    // This is NOT a generic error state and must not look like one.
-    return (
-      <div style={{ padding: 20, color: "var(--text-sub)", fontSize: 12, lineHeight: 1.7 }}>
-        No directional estimate yet for this station. This screening feature
-        only runs when a real statistical spike is detected in the station's
-        readings -- most hours produce no estimate at all, which is expected
-        behavior, not a failure.
-      </div>
-    );
+    // No estimate. WHY comes from the worker's last-run record: "no spike"
+    // is expected and calm, but "spike detected, wind fetch failed" is a
+    // real failure of this feature and must never look the same -- it used
+    // to render as the identical generic text. See lib/lastRun.js.
+    return <NoEstimateState run={describeLastRun(lastRun)} />;
   }
 
   const inconclusive = isInconclusive(doc);
@@ -201,6 +197,52 @@ export default function SourceDirectionPanel({ state }) {
         textTransform: "uppercase", paddingTop: 10, borderTop: "1px solid var(--border)",
       }}>
         {doc.label}
+      </div>
+    </div>
+  );
+}
+
+const TONE_STYLE = {
+  neutral: { background: "transparent", border: "1px solid var(--border)", accent: "var(--text-sub)" },
+  warning: { background: "rgba(250,204,21,0.06)", border: "1px solid rgba(250,204,21,0.45)", accent: "#facc15" },
+  error:   { background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.45)", accent: "#f87171" },
+};
+
+function fmtLocal(ts) {
+  return new Date(ts).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+// One component for every "no estimate" reason, styled by tone: calm for
+// "no spike", amber for "spike but no estimate", red for a failed run.
+function NoEstimateState({ run }) {
+  const tone = TONE_STYLE[run.tone] || TONE_STYLE.neutral;
+  return (
+    <div style={{ padding: 20 }}>
+      <div data-kind={run.kind} className="no-estimate-state" style={{
+        padding: "12px 14px", borderRadius: 10, background: tone.background, border: tone.border,
+        display: "flex", flexDirection: "column", gap: 8, fontSize: 12, lineHeight: 1.6,
+      }}>
+        <div style={{ fontWeight: 700, color: run.tone === "neutral" ? "var(--text)" : tone.accent }}>{run.title}</div>
+        {run.detail && <div style={{ color: "var(--text-sub)" }}>{run.detail}</div>}
+        {run.spikeAt && (
+          <div style={{ color: "var(--text-sub)" }}>
+            Spike reading: <strong style={{ color: "var(--text)" }}>{fmtLocal(run.spikeAt)}</strong>
+          </div>
+        )}
+        {run.code && (
+          <div style={{ color: "var(--text-sub)" }}>
+            Reason code: <code style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>{run.code}</code>
+          </div>
+        )}
+        {run.ranAt && (
+          <div>
+            {/* The record's own age vs the cron's 15-min cadence: if the
+                worker stops running, this turns STALE instead of the panel
+                quietly showing an old reason as if it were current. */}
+            <ConfidenceBadge state="measured" label="WORKER LAST RAN"
+              timestamp={run.ranAt} cadenceMinutes={SOURCE_DIRECTION_CADENCE_MIN} />
+          </div>
+        )}
       </div>
     </div>
   );

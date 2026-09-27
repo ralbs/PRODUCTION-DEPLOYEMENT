@@ -20,6 +20,7 @@ import HealthIntelligencePanel from "./components/HealthIntelligencePanel";
 import SourceDirectionPanel   from "./components/SourceDirectionPanel";
 import { useLiveWind } from "./lib/useLiveWind";
 import { plumeCardMeta } from "./lib/plumeCardMeta";
+import { SOURCE_DIRECTION_CADENCE_MIN } from "./lib/lastRun";
 
 const REFRESH_MS  = 60_000;
 const FORECAST_MS = 5 * 60_000;
@@ -68,6 +69,8 @@ export default function App() {
   // { status: "idle"|"loading"|"ok"|"not_found"|"error", doc, error } --
   // see SourceDirectionPanel.jsx for how each status renders.
   const [sourceDirection, setSourceDirection] = useState({ status: "idle", doc: null, error: null });
+  // { status: "idle"|"ok"|"not_found"|"error", doc } -- see refreshLastRun.
+  const [lastRun, setLastRun] = useState({ status: "idle", doc: null });
   // PROMPT_FLOW_UI.md Phase U5's map-move: PlumeVisualizer still owns
   // fetching (it already derives Q/H/windDir from `latest`), but the raw
   // result is lifted here so MapPanel can draw the same real grid as a geo
@@ -189,9 +192,27 @@ export default function App() {
     }
   }, [selected]);
 
+  // The worker's LAST RUN for this station (every run, skips included) --
+  // what lets the panel tell "no spike" from "spike, but no wind". Unlike an
+  // estimate, this record is rewritten on the cron's own cadence, so it IS
+  // polled on that cadence. Same stale-station guard as above.
+  const refreshLastRun = useCallback(async () => {
+    if (!selected) return;
+    const requestedFor = selected;
+    try {
+      const doc = await api.getSourceDirectionLastRun(selected);
+      if (selectedRef.current !== requestedFor) return;
+      setLastRun({ status: "ok", doc });
+    } catch (e) {
+      if (selectedRef.current !== requestedFor) return;
+      setLastRun({ status: e.message.startsWith("404") ? "not_found" : "error", doc: null });
+    }
+  }, [selected]);
+
   useEffect(() => {
     setLatest(null); setHistory([]); setForecast(null); setForecastStatus("loading");
     setSourceDirection({ status: "idle", doc: null, error: null });
+    setLastRun({ status: "idle", doc: null });
     // Same guard as sourceDirection above, and for the same reason:
     // MapPanel's buildPlumeGeoCells anchors plumeResult's grid to
     // `selectedStation`'s real coordinates, not to whichever station the
@@ -201,11 +222,12 @@ export default function App() {
     // PlumeVisualizer's re-fetch resolving. Found during Phase U5's
     // coordinate-alignment spot-check, not from the original U5 build.
     setPlumeResult(null);
-    refreshStation(); refreshForecast(); refreshSourceDirection();
+    refreshStation(); refreshForecast(); refreshSourceDirection(); refreshLastRun();
+    const tRun = setInterval(refreshLastRun, SOURCE_DIRECTION_CADENCE_MIN * 60 * 1000);
     const t1 = setInterval(refreshStation, REFRESH_MS);
     clearInterval(forecastTimer.current);
     forecastTimer.current = setInterval(refreshForecast, FORECAST_MS);
-    return () => { clearInterval(t1); clearInterval(forecastTimer.current); };
+    return () => { clearInterval(t1); clearInterval(tRun); clearInterval(forecastTimer.current); };
   }, [selected]);
 
   const stationName = selected?.replace("KSPCB-", "") ?? "–";
@@ -298,7 +320,7 @@ export default function App() {
           <FullscreenCard title="Source Direction" icon={<DirectionIcon />}
             meta={sourceDirection.status === "ok" ? sourceDirection.doc.estimate_tier.replace(/_/g, " ") : ""}
             bodyStyle={{ padding: 0 }}>
-            <SourceDirectionPanel state={sourceDirection} />
+            <SourceDirectionPanel state={sourceDirection} lastRun={lastRun} />
           </FullscreenCard>
         </div>
       </div>

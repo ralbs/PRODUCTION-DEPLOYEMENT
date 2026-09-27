@@ -28,8 +28,11 @@ from scripts.source_direction_worker import (
     fetch_stations,
     load_nellore_wind_history,
     make_idempotency_key,
+    build_run_record,
+    post_run_record,
     post_source_direction,
     process_station,
+    record_run,
     run_adjoint_tracer,
     valid_stations,
 )
@@ -304,3 +307,73 @@ def test_the_three_skip_reasons_are_mutually_distinguishable():
     assert "429" not in no_coverage["reason"] and "no coverage" not in rate_limited["reason"]
     assert "no spike" not in rate_limited["reason"] and "no spike" not in no_coverage["reason"]
     assert "wind" not in no_spike["reason"]
+
+
+# ---------------------------------------------------------------------
+# Run records -- the worker reports EVERY run, so the dashboard can tell
+# "no spike" from "spike, but no wind" (backend/models/WorkerRun.js).
+# Built here from REAL process_station() results, not hand-written dicts.
+# ---------------------------------------------------------------------
+RAN_AT = datetime(2026, 9, 27, 12, 0, 3, tzinfo=timezone.utc)
+
+
+def test_run_record_no_spike():
+    with rm_module.Mocker() as m:
+        result = _run(m, spike={**SPIKE, "is_spike": False}, as_of=datetime.now(timezone.utc), use_live_wind=True)
+    rec = build_run_record(result, RAN_AT)
+    assert rec == {
+        "station_id": "NEL-001", "outcome": "skipped", "reason": "no spike",
+        "wind_failure_reason": None, "spike_detected": False, "spike_timestamp": None,
+        "ran_at": "2026-09-27T12:00:03+00:00",
+    }
+
+
+def test_run_record_spike_but_wind_rate_limited():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, status_code=429)
+        result = _run(m, spike=SPIKE, as_of=datetime.now(timezone.utc), use_live_wind=True)
+    rec = build_run_record(result, RAN_AT)
+    assert rec["outcome"] == "skipped"
+    assert rec["spike_detected"] is True
+    assert rec["spike_timestamp"] == SPIKE["timestamp"]
+    assert rec["wind_failure_reason"] == "provider_http_429"
+    assert rec["reason"].startswith("no real wind data: provider_http_429")
+
+
+def test_run_record_spike_but_archive_no_coverage():
+    with rm_module.Mocker() as m:
+        result = _run(m, spike=SPIKE, as_of=datetime(2030, 1, 1, 12, tzinfo=timezone.utc), use_live_wind=False)
+    rec = build_run_record(result, RAN_AT)
+    assert rec["spike_detected"] is True
+    assert rec["wind_failure_reason"] == "window has no coverage"
+
+
+def test_run_record_not_enough_data_leaves_spike_unknown():
+    with rm_module.Mocker() as m:
+        m.get(f"{BASE}/api/forecast/spike-check", status_code=404, json={"error": "Not enough data"})
+        result = process_station(BASE, STATION, CITY, "W", "k", datetime.now(timezone.utc), use_live_wind=True)
+    rec = build_run_record(result, RAN_AT)
+    assert rec["outcome"] == "skipped"
+    assert rec["spike_detected"] is None  # the check couldn't run -- not "no spike"
+    assert rec["reason"] == "not enough data for a spike check"
+
+
+def test_run_record_post_failure_is_an_error_not_a_skip():
+    rec = build_run_record({"station_id": "NEL-001", "action": "post_failed", "status_code": 500, "spike": SPIKE}, RAN_AT)
+    assert rec["outcome"] == "error"
+    assert rec["reason"] == "post_failed: HTTP 500"
+
+
+def test_post_run_record_uses_worker_auth_headers():
+    with rm_module.Mocker() as m:
+        m.post(f"{BASE}/api/source-direction/runs", status_code=201, json={"status": "success"})
+        post_run_record(BASE, "WORKER-SOURCE-DIRECTION", "secret", {"station_id": "NEL-001"})
+    assert m.last_request.headers["X-Device-Id"] == "WORKER-SOURCE-DIRECTION"
+    assert m.last_request.headers["X-Device-Key"] == "secret"
+
+
+def test_record_run_never_breaks_the_run(capsys):
+    with rm_module.Mocker() as m:
+        m.post(f"{BASE}/api/source-direction/runs", exc=requests.exceptions.ConnectionError)
+        record_run(BASE, "W", "k", {"station_id": "NEL-001", "action": "skipped", "reason": "no spike"}, RAN_AT)
+    assert "run record not stored" in capsys.readouterr().out
