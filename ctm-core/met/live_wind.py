@@ -75,7 +75,32 @@ def fetch_live_wind_series(
     row is non-finite/incomplete -- the same honest "no real data, skip"
     behavior scripts/source_direction_worker.py's historical-archive path
     (load_nellore_wind_history) already has for its own coverage gaps.
-    Never fabricates a fallback reading.
+    Never fabricates a fallback reading. Use fetch_live_wind_series_detailed()
+    when the caller needs to know WHY the result is empty.
+    """
+    return fetch_live_wind_series_detailed(lat, lon, hours_back, timeout)[0]
+
+
+def fetch_live_wind_series_detailed(
+    lat: float,
+    lon: float,
+    hours_back: float = 1.0,
+    timeout: float = 10.0,
+) -> tuple[list[tuple[datetime, StationObservation]], str | None]:
+    """Same as fetch_live_wind_series(), but returns (series, reason).
+
+    `reason` is None on success, else a short fixed code saying WHY there is
+    no wind -- the same codes backend/lib/liveWind.js reports -- so a real
+    provider failure is no longer indistinguishable from "no data":
+      provider_http_<status>  e.g. provider_http_429 (Open-Meteo rate limit,
+                              seen for real from Render's shared outbound IP)
+      timeout                 no response within `timeout` seconds
+      network_error_<Type>    connection-level failure (requests exception class)
+      provider_non_json       2xx body that isn't JSON
+      payload_missing_fields  JSON without the current/hourly fields used here
+      no_valid_rows_in_window provider answered, but no finite, complete
+                              hourly row falls inside the requested window
+    Never a secret, never a raw provider body.
     """
     params = {
         "latitude": lat,
@@ -89,10 +114,16 @@ def fetch_live_wind_series(
     }
     try:
         resp = requests.get(LIVE_WIND_BASE_URL, params=params, timeout=timeout)
-        resp.raise_for_status()
+    except requests.Timeout:
+        return [], "timeout"
+    except requests.RequestException as exc:
+        return [], f"network_error_{type(exc).__name__}"
+    if not resp.ok:
+        return [], f"provider_http_{resp.status_code}"
+    try:
         payload = resp.json()
-    except (requests.RequestException, ValueError):
-        return []
+    except ValueError:
+        return [], "provider_non_json"
 
     try:
         now = datetime.fromisoformat(payload["current"]["time"]).replace(tzinfo=timezone.utc)
@@ -103,7 +134,7 @@ def fetch_live_wind_series(
         temp = hourly["temperature_2m"]
         rhum = hourly["relative_humidity_2m"]
     except (KeyError, TypeError, ValueError):
-        return []
+        return [], "payload_missing_fields"
 
     window_start = now - timedelta(hours=hours_back)
     series: list[tuple[datetime, StationObservation]] = []
@@ -133,4 +164,6 @@ def fetch_live_wind_series(
         ))
 
     series.sort(key=lambda pair: pair[0])
-    return series
+    if not series:
+        return [], "no_valid_rows_in_window"
+    return series, None

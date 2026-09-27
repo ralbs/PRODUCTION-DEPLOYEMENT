@@ -14,7 +14,10 @@ from datetime import datetime, timezone
 
 import requests_mock as rm_module
 
-from met.live_wind import LIVE_WIND_BASE_URL, fetch_live_wind_series
+import pytest
+import requests
+
+from met.live_wind import LIVE_WIND_BASE_URL, fetch_live_wind_series, fetch_live_wind_series_detailed
 
 REAL_SHAPE_RESPONSE = {
     "latitude": 14.446397, "longitude": 79.99074,
@@ -86,3 +89,54 @@ def test_fetch_live_wind_series_returns_empty_on_malformed_json():
         m.get(LIVE_WIND_BASE_URL, json={"unexpected": "shape"})
         series = fetch_live_wind_series(14.442, 79.986)
     assert series == []
+
+
+# ---------------------------------------------------------------------
+# fetch_live_wind_series_detailed() -- WHY there is no wind
+# ---------------------------------------------------------------------
+# A real Open-Meteo 429 was observed from Render's shared outbound IP on
+# 2026-09-27. Before this, every failure below collapsed into the same bare
+# [] and was indistinguishable from "no data". Each now has its own reason.
+
+@pytest.mark.parametrize("status", [429, 500, 503, 403])
+def test_detailed_reports_the_real_http_status(status):
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, status_code=status, json={"error": True, "reason": "limit"})
+        series, reason = fetch_live_wind_series_detailed(14.442, 79.986)
+    assert series == []
+    assert reason == f"provider_http_{status}"
+
+
+def test_detailed_timeout_and_connection_errors_are_distinct():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, exc=requests.exceptions.ConnectTimeout)
+        assert fetch_live_wind_series_detailed(14.442, 79.986) == ([], "timeout")
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, exc=requests.exceptions.ConnectionError)
+        assert fetch_live_wind_series_detailed(14.442, 79.986) == ([], "network_error_ConnectionError")
+
+
+def test_detailed_non_json_and_missing_fields_are_distinct():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, text="<html>not json</html>")
+        assert fetch_live_wind_series_detailed(14.442, 79.986) == ([], "provider_non_json")
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, json={"unexpected": "shape"})
+        assert fetch_live_wind_series_detailed(14.442, 79.986) == ([], "payload_missing_fields")
+
+
+def test_detailed_provider_answered_but_no_usable_row_in_window():
+    bad = {**REAL_SHAPE_RESPONSE, "hourly": {**REAL_SHAPE_RESPONSE["hourly"],
+           "wind_speed_10m": [float("nan")] * 4}}
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, json=bad)
+        assert fetch_live_wind_series_detailed(14.442, 79.986) == ([], "no_valid_rows_in_window")
+
+
+def test_detailed_success_has_no_reason_and_matches_the_plain_function():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, json=REAL_SHAPE_RESPONSE)
+        series, reason = fetch_live_wind_series_detailed(14.442, 79.986)
+        plain = fetch_live_wind_series(14.442, 79.986)
+    assert reason is None
+    assert series and series == plain

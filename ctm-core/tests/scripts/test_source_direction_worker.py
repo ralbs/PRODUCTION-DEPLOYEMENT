@@ -29,6 +29,7 @@ from scripts.source_direction_worker import (
     load_nellore_wind_history,
     make_idempotency_key,
     post_source_direction,
+    process_station,
     run_adjoint_tracer,
     valid_stations,
 )
@@ -232,3 +233,74 @@ def test_run_adjoint_tracer_returns_none_for_receptor_outside_domain():
     far_away_lat, far_away_lon = 50.0, 50.0  # nowhere near live_deployment's domain
     wind_window = _synthetic_wind_window(90.0, 5.0)
     assert run_adjoint_tracer(CITY, far_away_lat, far_away_lon, wind_window) is None
+
+
+# ---------------------------------------------------------------------
+# process_station() skip reasons -- three different situations that must
+# never read the same. Before this, a real provider failure (Open-Meteo
+# 429s were observed for real from Render on 2026-09-27) produced the same
+# "no real wind data covering..." string as an archive coverage gap, and a
+# skip of any kind left the dashboard indistinguishable from "no spike".
+# ---------------------------------------------------------------------
+from met.live_wind import LIVE_WIND_BASE_URL  # noqa: E402
+
+BASE = "http://test-backend"
+STATION = {"station_id": "NEL-001", "device_id": "ESP32-001", "location": {"lat": 14.442, "lon": 79.986}}
+SPIKE = {
+    "station_id": "NEL-001", "is_spike": True, "actual_aqi": 180, "predicted_aqi": 90,
+    "predicted_low": 70, "predicted_high": 110, "sigma": 20, "timestamp": "2025-08-15T12:00:00.000Z",
+}
+
+
+def _run(m, *, spike, as_of, use_live_wind):
+    m.get(f"{BASE}/api/forecast/spike-check", json=spike)
+    return process_station(BASE, STATION, CITY, "WORKER-SOURCE-DIRECTION", "k", as_of,
+                           use_live_wind=use_live_wind)
+
+
+def test_skip_no_spike_reads_as_no_spike():
+    with rm_module.Mocker() as m:
+        out = _run(m, spike={**SPIKE, "is_spike": False}, as_of=datetime.now(timezone.utc), use_live_wind=True)
+        assert not any(LIVE_WIND_BASE_URL in r.url for r in m.request_history), "must stop before any wind fetch"
+    assert out["action"] == "skipped"
+    assert out["reason"] == "no spike"
+    assert "wind_failure_reason" not in out
+
+
+def test_skip_live_wind_rate_limited_names_the_http_status():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, status_code=429, json={"error": True, "reason": "limit exceeded"})
+        out = _run(m, spike=SPIKE, as_of=datetime.now(timezone.utc), use_live_wind=True)
+        assert not any(r.method == "POST" for r in m.request_history), "a skip must never post an estimate"
+    assert out["action"] == "skipped"
+    assert out["reason"].startswith("no real wind data: provider_http_429")
+    assert out["wind_failure_reason"] == "provider_http_429"
+
+
+def test_skip_archive_without_coverage_says_so():
+    # The committed archive covers 2025-08; 2030 has no rows.
+    with rm_module.Mocker() as m:
+        out = _run(m, spike=SPIKE, as_of=datetime(2030, 1, 1, 12, tzinfo=timezone.utc), use_live_wind=False)
+    assert out["action"] == "skipped"
+    assert out["reason"].startswith("no real wind data: window has no coverage")
+    assert out["wind_failure_reason"] == "window has no coverage"
+
+
+def test_the_three_skip_reasons_are_mutually_distinguishable():
+    with rm_module.Mocker() as m:
+        no_spike = _run(m, spike={**SPIKE, "is_spike": False}, as_of=datetime.now(timezone.utc), use_live_wind=True)
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, status_code=429)
+        rate_limited = _run(m, spike=SPIKE, as_of=datetime.now(timezone.utc), use_live_wind=True)
+    with rm_module.Mocker() as m:
+        no_coverage = _run(m, spike=SPIKE, as_of=datetime(2030, 1, 1, 12, tzinfo=timezone.utc), use_live_wind=False)
+
+    reasons = [no_spike["reason"], rate_limited["reason"], no_coverage["reason"]]
+    assert len(set(reasons)) == 3
+    # Different strings aren't enough (the old ones differed only by which
+    # source they named): each must name ITS OWN cause, and only its own.
+    assert "provider_http_429" in rate_limited["reason"]
+    assert "no coverage" in no_coverage["reason"]
+    assert "429" not in no_coverage["reason"] and "no coverage" not in rate_limited["reason"]
+    assert "no spike" not in rate_limited["reason"] and "no spike" not in no_coverage["reason"]
+    assert "wind" not in no_spike["reason"]

@@ -46,7 +46,7 @@ from met.ingest_real_met import (
     NELLORE_STATION_LON,
     load_real_met_series,
 )
-from met.live_wind import fetch_live_wind_series
+from met.live_wind import fetch_live_wind_series_detailed
 from met.weather_station import StationObservation, interpolate_met, mixing_height_m
 
 NELLORE_MET_CSV = Path(__file__).resolve().parents[1] / "data" / "raw" / "meteostat_nellore" / "43245_202508.csv"
@@ -325,25 +325,32 @@ def process_station(
     # the same as a real on-site sensor reading would. See
     # ctm-core/CLAUDE.md's confidence-treatment principle.
     if use_live_wind:
-        wind_window = fetch_live_wind_series(
+        wind_window, wind_failure = fetch_live_wind_series_detailed(
             station["location"]["lat"], station["location"]["lon"], hours_back=city.wind_history_hours,
         )
         wind_source_desc = "met/live_wind.py's real live current-conditions feed"
         wind_source_tier = "live_model_nowcast"
     else:
         wind_window = load_nellore_wind_history(as_of, city.wind_history_hours)
+        # The archive is a local file: an empty window can only mean it has
+        # no rows for this period, never a provider/network failure.
+        wind_failure = None if wind_window else "window has no coverage"
         wind_source_desc = (
             "met/ingest_real_met.py's archive (real HISTORICAL data, not a live feed -- "
             "see its module docstring)"
         )
         wind_source_tier = "historical_ground_station"
     if not wind_window:
+        # The WHY leads the string: a provider failure (e.g. provider_http_429,
+        # seen for real from Render's shared IP) must never read like an
+        # ordinary coverage gap, or like "no spike".
         return {
             "station_id": station_id, "action": "skipped",
             "reason": (
-                f"no real wind data covering the {city.wind_history_hours}h window ending "
+                f"no real wind data: {wind_failure} -- {city.wind_history_hours}h window ending "
                 f"{as_of.isoformat()} ({wind_source_desc})"
             ),
+            "wind_failure_reason": wind_failure,
             "spike": spike,
         }
 
