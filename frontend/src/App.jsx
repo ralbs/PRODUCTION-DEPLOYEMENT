@@ -21,6 +21,8 @@ import SourceDirectionPanel   from "./components/SourceDirectionPanel";
 import { useLiveWind } from "./lib/useLiveWind";
 import { plumeCardMeta } from "./lib/plumeCardMeta";
 import { SOURCE_DIRECTION_CADENCE_MIN } from "./lib/lastRun";
+import { buildHeroModel } from "./lib/heroModel";
+import { loadSensitivity, saveSensitivity } from "./lib/sensitivity";
 
 const REFRESH_MS  = 60_000;
 const FORECAST_MS = 5 * 60_000;
@@ -54,6 +56,17 @@ function useDataFreshness(timestamp) {
     return () => clearInterval(t);
   }, [timestamp]);
   return age;
+}
+
+// A clock for age-dependent UI: the hero has to go stale on its own even
+// when no new reading (and so no re-render) ever arrives.
+function useNow(intervalMs = 30_000) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
 }
 
 export default function App() {
@@ -252,10 +265,26 @@ export default function App() {
   // estimate. Opacity still encodes provenance: 0.4 for a model nowcast
   // (live_model_nowcast), 1 for real ground-station wind, 0 when there is
   // no wind at all -- never a fabricated bearing.
+  // docs/HERO_SPEC.md: what the hero says, and whether it may speak in the
+  // present tense at all (stale after 10 min without a reading).
+  const nowMs = useNow();
+  // The viewer's own alert level -- this browser only, no account.
+  const [sensitivity, setSensitivity] = useState(() => loadSensitivity());
+  const changeSensitivity = useCallback((pref) => setSensitivity(saveSensitivity(pref)), []);
+  const heroModel = buildHeroModel({
+    stationId: selected, latest,
+    latestStatus: latest ? "ok" : error ? "error" : "loading",
+    forecast: forecastStatus === "ok" ? forecast : null,
+    sourceDirection, lastRun, sensitivity, nowMs,
+  });
+  const heroLive = heroModel.mode === "current";
+
   const ambientStyle = useMemo(() => {
     const wind = liveWind.status === "ok" ? liveWind.data : null;
     const hasWind = wind?.speed_m_s != null && wind?.dir_from_deg != null;
-    const [r, g, b] = aqiToRgb(latest?.aqi?.aqi) || [0, 0, 0];
+    // A stale reading's category colour must not tint the page as if it
+    // were current (HERO_SPEC.md s.4) -- neutral grey instead.
+    const [r, g, b] = heroLive ? (aqiToRgb(latest?.aqi?.aqi) || [0, 0, 0]) : [148, 163, 184];
     return {
       "--wind-bearing-deg": `${wind?.dir_from_deg ?? 0}deg`,
       "--wind-drift-duration": `${Math.max(8, 40 - (wind?.speed_m_s ?? 0) * 3)}s`,
@@ -264,7 +293,7 @@ export default function App() {
         ? 0
         : wind.source_tier === "historical_ground_station" ? 1 : 0.4,
     };
-  }, [liveWind, latest?.aqi?.aqi]);
+  }, [liveWind, latest?.aqi?.aqi, heroLive]);
 
   return (
     <div className="app-shell">
@@ -275,7 +304,8 @@ export default function App() {
       <Header voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)} />
 
       <HeroSection stations={stations} selected={selected} onSelect={setSelected}
-        aqi={latest?.aqi} onRunAnalysis={() => mainRef.current?.scrollIntoView({ behavior: "smooth" })} />
+        model={heroModel} sensitivity={sensitivity} onSensitivityChange={changeSensitivity}
+        onShowDetails={() => mainRef.current?.scrollIntoView({ behavior: "smooth" })} />
 
       {error && <div className="error-bar">{error}</div>}
 

@@ -1,73 +1,129 @@
+import { useEffect, useState } from "react";
+import ConfidenceBadge from "./ConfidenceBadge";
 import { DEPLOYMENT } from "../lib/deployment";
+import { STALE_AFTER_MIN } from "../lib/heroModel";
+import { PRESETS } from "../lib/sensitivity";
 
-export default function HeroSection({ stations, selected, onSelect, aqi, onRunAnalysis }) {
-  const value = aqi?.aqi;
-  const cat   = aqi?.category;
-
-  const catColor = {
-    Good: "#22c55e", Satisfactory: "#a3e635", Moderate: "#facc15",
-    Poor: "#f97316", "Very Poor": "#ef4444", Severe: "#9f1239",
-  }[cat] || "#7b93b8";
+// The hero, per docs/HERO_SPEC.md. `model` comes from lib/heroModel.js
+// (pure, tested) -- this component only lays it out. Colour is the AQI
+// category from lib/aqiColor.js, used as an accent + light tint, never as a
+// fill behind text; in stale mode everything goes neutral so the colour
+// can't claim current conditions.
+//
+// The viewer's alert level (lib/sensitivity.js) sets the emphasis: at or
+// above it, the category colour is stronger (current mode only); below it,
+// the hero stays quiet. In stale mode colour stays neutral either way and
+// the emphasis is typographic -- a past reading must not tint as current.
+export default function HeroSection({ stations, selected, onSelect, model, sensitivity, onSensitivityChange, onShowDetails }) {
+  const live = model.mode === "current";
+  const above = model.personal?.above;
+  const rgb = live && model.rgb ? model.rgb.join(",") : "148,163,184";
+  const style = {
+    "--hero-accent": `rgb(${rgb})`,
+    "--hero-tint": `rgba(${rgb}, ${live ? (above ? 0.18 : 0.05) : 0.05})`,
+    "--hero-accent-w": live && above ? "10px" : "4px",
+  };
 
   return (
-    <section className="hero">
-      <div className="hero-inner">
-        <div>
+    <section className={`hero2 hero2-${model.mode}${above ? " hero2-above" : ""}`} style={style} aria-live="polite">
+      <div className="hero2-inner">
+        <div className="hero2-top">
           <div className="hero-location">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
             </svg>
             {DEPLOYMENT.city}, {DEPLOYMENT.region}
           </div>
-          <h1 className="hero-heading">
-            Air Quality<br />Intelligence
-          </h1>
-          <p className="hero-sub">
-            Real-time health indices, AI forecast, and pollution dispersion
-            from this deployment's live sensor network.
-          </p>
+          <div className="hero2-controls">
+          <SensitivityPicker value={sensitivity} onChange={onSensitivityChange} />
+          <label className="hero2-station">
+            <span className="hero2-station-label">Station</span>
+            <select className="hero-select" value={selected || ""} onChange={(e) => onSelect(e.target.value)}>
+              {stations.map((s) => (
+                <option key={s.station_id} value={s.station_id}>{s.station_id}</option>
+              ))}
+            </select>
+          </label>
+          </div>
         </div>
 
-        <div className="hero-card">
-          <div className="hero-card-label">Monitoring Station</div>
-          <select className="hero-select" value={selected || ""} onChange={(e) => onSelect(e.target.value)}>
-            {stations.map((s) => (
-              <option key={s.station_id} value={s.station_id}>{s.station_id.replace("KSPCB-", "")}</option>
-            ))}
-          </select>
+        <div className="hero2-body">
+          <div className="hero2-text">
+            <h1 className="hero2-headline" data-testid="hero-headline">{model.headline}</h1>
+            {model.personal && (
+              <p className={`hero2-personal ${model.personal.above ? "is-above" : "is-below"}`} data-testid="hero-personal">
+                {model.personal.text}
+              </p>
+            )}
+            {model.secondary && <p className="hero2-secondary" data-testid="hero-secondary">{model.secondary}</p>}
 
-          <button className="hero-btn" onClick={onRunAnalysis}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            View Dashboard
-          </button>
+            {live && model.trend?.text && (
+              <p className="hero2-trend" data-testid="hero-trend">
+                {model.trend.text}{" "}
+                <ConfidenceBadge state="estimated" label="STATISTICAL FORECAST" timestamp={model.trend.generatedAt} />
+              </p>
+            )}
+            {live && model.trend && !model.trend.text && (
+              <p className="hero2-note" data-testid="hero-trend-none">
+                {model.trend.why === "no_forecast" || model.trend.why === "too_few_points"
+                  ? "No trend shown — not enough readings for a forecast yet."
+                  : "No trend shown — the forecast isn't reliable at this reading frequency yet."}
+              </p>
+            )}
 
-          {value != null && (
-            <div style={{
-              marginTop: 14, padding: "12px 16px", borderRadius: 12,
-              background: "rgba(0,229,160,0.06)", border: "1px solid rgba(0,229,160,0.14)",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-            }}>
-              <div>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-dim)" }}>
-                  Current AQI
-                </div>
-                <div style={{ fontSize: 28, fontFamily: "var(--font-mono)", fontWeight: 800, color: catColor, lineHeight: 1.1 }}>
-                  {value}
-                </div>
-              </div>
-              <div style={{
-                padding: "4px 14px", borderRadius: 20,
-                fontSize: 11, fontWeight: 700, color: catColor,
-                background: `${catColor}18`, border: `1px solid ${catColor}40`,
-              }}>
-                {cat}
-              </div>
+            {model.direction && <p className="hero2-direction" data-testid="hero-direction">{model.direction}</p>}
+          </div>
+
+          {model.aqi != null && (
+            <div className="hero2-figure">
+              <div className="hero2-aqi-label">{live ? "AQI" : "Last AQI"}</div>
+              <div className="hero2-aqi" data-testid="hero-aqi">{model.aqi}</div>
+              <div className="hero2-cat">{model.category}</div>
+              <ConfidenceBadge state="measured" label="LATEST READING"
+                timestamp={model.readingAtMs ? new Date(model.readingAtMs).toISOString() : null}
+                staleAfterMinutes={STALE_AFTER_MIN} />
             </div>
           )}
         </div>
+
+        <button type="button" className="hero2-details" onClick={onShowDetails}>
+          Details: map, forecast, source direction, readings ↓
+        </button>
       </div>
     </section>
+  );
+}
+
+// General / Sensitive presets or a raw CPCB AQI number. The number input
+// keeps its own draft so typing "1" on the way to "150" doesn't commit 1.
+function SensitivityPicker({ value, onChange }) {
+  const [draft, setDraft] = useState(String(value?.threshold ?? ""));
+  useEffect(() => { setDraft(String(value?.threshold ?? "")); }, [value?.threshold]);
+  if (!value) return null;
+  const commit = () => {
+    const t = Number(draft);
+    if (Number.isInteger(t) && t >= 1 && t <= 500) onChange({ kind: "custom", threshold: t });
+    else setDraft(String(value.threshold));
+  };
+  return (
+    <div className="hero2-sens">
+      <label className="hero2-station">
+        <span className="hero2-station-label">Alert me at</span>
+        <select className="hero-select" data-testid="sens-kind" value={value.kind}
+          onChange={(e) => onChange(e.target.value === "custom"
+            ? { kind: "custom", threshold: value.threshold } : { kind: e.target.value })}>
+          {Object.entries(PRESETS).map(([k, p]) => (
+            <option key={k} value={k}>{p.label} (AQI {p.threshold}+)</option>
+          ))}
+          <option value="custom">My own AQI level…</option>
+        </select>
+      </label>
+      {value.kind === "custom" && (
+        <input className="hero2-sens-num" data-testid="sens-threshold" type="number" min="1" max="500" step="1"
+          aria-label="Your alert level, CPCB AQI" value={draft}
+          onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); }} />
+      )}
+    </div>
   );
 }

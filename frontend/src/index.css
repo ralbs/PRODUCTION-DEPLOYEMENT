@@ -195,6 +195,97 @@ body {
 }
 .hero-btn:hover { opacity: 0.9; transform: translateY(-1px); }
 
+/* ──────────────────────────────── HERO v2 (docs/HERO_SPEC.md) ──
+   Category colour is an accent bar + low-alpha tint only -- text never sits
+   on a saturated category fill. Background stays translucent so the fixed
+   ambient wind field shows through (ambient-data principle). */
+.hero2 {
+  position: relative;
+  padding: 36px 36px 28px;
+  background: linear-gradient(var(--hero-tint), var(--hero-tint)), rgba(11,15,26,0.55);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset var(--hero-accent-w, 6px) 0 0 var(--hero-accent);
+  transition: background 0.6s, box-shadow 0.6s;
+}
+.hero2-inner { max-width: 1400px; margin: 0 auto; }
+.hero2-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 20px;
+}
+.hero2-top .hero-location { margin-bottom: 0; }
+.hero2-station { display: flex; align-items: center; gap: 10px; }
+.hero2-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px 20px; }
+.hero2-sens { display: flex; align-items: center; gap: 8px; }
+.hero2-sens-num {
+  width: 72px; padding: 9px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+  font-family: var(--font-mono); font-size: 13px;
+}
+.hero2-sens-num:focus { border-color: var(--accent); outline: none; }
+/* Personal line: the viewer's own level. Above it -> emphasised (bold,
+   text-colour rule); below -> quiet. Colour stays text tokens so contrast
+   holds in every category. */
+.hero2-personal {
+  margin-bottom: 8px; font-size: 16px; line-height: 1.5;
+  padding-left: 12px; border-left: 3px solid transparent;
+}
+.hero2-personal.is-above { color: var(--text); font-weight: 700; border-left-color: var(--text); }
+.hero2-personal.is-below { color: var(--text-sub); font-weight: 400; border-left-color: var(--border); }
+.hero2-current.hero2-above .hero2-cat { border-width: 2px; font-weight: 700; }
+.hero2-station-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--text-sub); white-space: nowrap;
+}
+.hero2-station .hero-select { width: auto; min-width: 140px; padding-right: 28px; }
+.hero2-body {
+  display: grid; grid-template-columns: 1fr auto; gap: 32px; align-items: start;
+}
+.hero2-headline {
+  font-size: clamp(28px, 4vw, 44px); font-weight: 700;
+  line-height: 1.12; color: var(--text); letter-spacing: -0.4px;
+  margin-bottom: 10px;
+}
+.hero2-secondary { font-size: 15px; line-height: 1.6; color: var(--text-sub); max-width: 720px; }
+.hero2-trend {
+  margin-top: 14px; font-size: 13px; color: var(--text);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.hero2-note { margin-top: 14px; font-size: 12px; color: var(--text-sub); font-style: italic; }
+.hero2-direction { margin-top: 8px; font-size: 13px; color: var(--text-sub); }
+.hero2-figure {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  text-align: right;
+}
+.hero2-aqi-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-sub);
+}
+.hero2-aqi {
+  font-family: var(--font-mono); font-size: 36px; font-weight: 700;
+  line-height: 1; color: var(--text);
+}
+.hero2-cat {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  padding: 2px 10px; border-radius: 20px;
+  border: 1px solid var(--hero-accent);
+}
+.hero2-stale .hero2-aqi { font-size: 22px; color: var(--text-sub); }
+.hero2-details {
+  margin-top: 22px; padding: 0; border: none; background: none;
+  color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.hero2-details:hover, .hero2-details:focus-visible { text-decoration: underline; }
+@media (max-width: 640px) {
+  .hero2 { padding: 24px 16px 20px; }
+  .hero2-top { flex-wrap: wrap; }
+  .hero2-controls { justify-content: flex-start; }
+  .hero2-body { grid-template-columns: 1fr; gap: 16px; }
+  .hero2-figure { align-items: flex-start; text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero2 { transition: none; }
+}
+
 /* ──────────────────────────────── AQI CATEGORY BAR ── */
 .aqi-legend-bar {
   display: grid; grid-template-columns: repeat(6, 1fr);
