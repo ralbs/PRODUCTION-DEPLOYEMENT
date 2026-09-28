@@ -106,7 +106,7 @@ body {
 .header-title { font-size: 14px; font-weight: 700; color: var(--text); }
 .header-sub { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
 
-.header-right { display: flex; align-items: center; gap: 10px; }
+.header-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 
 .header-time { font-size: 12px; color: var(--text-sub); font-family: var(--font-mono); }
 
@@ -278,7 +278,10 @@ body {
 @media (max-width: 640px) {
   .hero2 { padding: 24px 16px 20px; }
   .hero2-top { flex-wrap: wrap; }
-  .hero2-controls { justify-content: flex-start; }
+  .hero2-controls { justify-content: flex-start; width: 100%; }
+  .hero2-station { min-width: 0; }
+  .hero2-station .hero-select { min-width: 0; max-width: 100%; }
+  .hero2-sens { flex-wrap: wrap; min-width: 0; }
   .hero2-body { grid-template-columns: 1fr; gap: 16px; }
   .hero2-figure { align-items: flex-start; text-align: left; }
 }
@@ -321,7 +324,8 @@ body {
   background: linear-gradient(90deg, transparent, var(--border-hi), transparent);
 }
 .card-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 16px; min-width: 0;
 }
 .card-title-row {
   display: flex; align-items: center; gap: 8px;
@@ -397,6 +401,7 @@ body {
 .station-table-wrap {
   padding: 20px 28px;
   max-width: 1400px; margin: 0 auto; width: 100%;
+  overflow-x: auto; /* a wide table scrolls inside itself, never the page */
 }
 .station-table {
   width: 100%; border-collapse: separate; border-spacing: 0;
@@ -433,8 +438,10 @@ body {
   max-width: 1400px; margin: 24px auto; width: 100%;
   gap: 20px; padding: 0 28px;
 }
-.left-col { display: flex; flex-direction: column; gap: 20px; }
-.right-col { display: flex; flex-direction: column; gap: 20px; }
+/* min-width: 0 -- grid/flex items default to min-width:auto, so one wide
+   card header forced both columns to 471px on a 390px phone. */
+.left-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.right-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 
 /* ──────────────────────────────── MAP ── */
 .map-section { position: relative; border-radius: var(--r-card); overflow: hidden; min-height: 320px; }
@@ -745,7 +752,10 @@ body {
 }
 
 @media (max-width: 480px) {
-  .header { padding: 0 16px; }
+  .header { padding: 0 16px; gap: 8px; }
+  /* The clock and subtitle are the first things to give up on a phone. */
+  .header-time, .header-sub, .ready-badge { display: none; }
+  .header-right { gap: 6px; }
   .hero-heading { font-size: 2rem; }
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }
 }
