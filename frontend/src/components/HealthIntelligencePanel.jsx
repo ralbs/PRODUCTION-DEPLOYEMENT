@@ -123,7 +123,7 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
           color={respRisk.color} tip="Lung irritation risk from PM2.5, PM10, SO₂" />
         <Card label="Oxidative Stress" value={indices.osi} unit="/100"
           sub={indices.osi <= 25 ? "Low" : indices.osi <= 50 ? "Moderate" : "High"}
-          color={indices.osi <= 25 ? "#22c55e" : indices.osi <= 50 ? "#facc15" : "#ef4444"}
+          color={indices.osi <= 25 ? "#22c55e" : indices.osi <= 50 ? "#facc15" : "#f87171" /* text-safe red: 5.2:1+ on cards; #ef4444 was 4.22 */}
           tip="Cell damage potential from pollutant exposure vs WHO limits" />
         <Card label="Inhaled Dose" value={indices.edi} unit="µg/day"
           sub="PM2.5 × breathing rate × 24h" color="#38bdf8"

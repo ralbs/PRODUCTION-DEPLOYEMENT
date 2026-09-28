@@ -41,7 +41,7 @@ export default function AlertToast({ aqi, station }) {
   }, [aqi?.aqi]);
 
   return (
-    <div ref={toastRef} className="alert-toast">
+    <div ref={toastRef} className="alert-toast" role="status" aria-live="polite">
       <div className="toast-title" />
       <div className="toast-body" />
       <button

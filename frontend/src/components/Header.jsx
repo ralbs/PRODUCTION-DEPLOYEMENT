@@ -109,7 +109,7 @@ export default function Header({ voiceEnabled, onVoiceToggle, lastReadingAt, now
           className={`icon-btn${voiceEnabled ? " active" : ""}`}
           onClick={onVoiceToggle}
           title={voiceEnabled ? "Voice ON — click to disable" : "Enable voice alerts"}
-          aria-label={voiceEnabled ? "Voice alerts on" : "Voice alerts off"}
+          aria-label="Voice alerts" aria-pressed={voiceEnabled}
         >
           {voiceEnabled ? (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

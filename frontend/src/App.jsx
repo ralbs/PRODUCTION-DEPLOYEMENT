@@ -304,6 +304,9 @@ export default function App() {
       <Header voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)}
         lastReadingAt={latest?.timestamp} nowMs={nowMs} />
 
+      {/* One <main> landmark for everything below the header (axe
+          landmark-one-main / region). */}
+      <main>
       <HeroSection stations={stations} selected={selected} onSelect={setSelected}
         model={heroModel} sensitivity={sensitivity} onSensitivityChange={changeSensitivity}
         onShowDetails={() => mainRef.current?.scrollIntoView({ behavior: "smooth" })} />
@@ -383,6 +386,7 @@ export default function App() {
           <PlumeVisualizer latest={latest} wind={liveWind} caption={plumeCaption} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
+      </main>
     </div>
   );
 }

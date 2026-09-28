@@ -39,11 +39,13 @@ export const WHO_GUIDELINES = {
 
 // ── Clinical CRP Reference (mg/L) ──
 // Pearson TA et al., Circulation, 2003; CDC/AHA hs-CRP Statement
+// Label colours are TEXT colours (rendered on dark cards): reds use #f87171,
+// which clears WCAG AA (>= 5.2:1); #ef4444 was 4.22:1 on #1a2234.
 export const CRP_REFERENCE = [
   { max: 1,  label: "Low inflammation",        color: "#22c55e" },
   { max: 3,  label: "Mild / average",           color: "#a3e635" },
   { max: 10, label: "Elevated inflammation",    color: "#f97316" },
-  { max: Infinity, label: "Acute inflammation", color: "#ef4444" },
+  { max: Infinity, label: "Acute inflammation", color: "#f87171" },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ export function calcCRP(pollutants) {
     lnCRP: +lnCRP.toFixed(4),
     crp: +crp.toFixed(3),
     interpretation: interpretation?.label || "Unknown",
-    color: interpretation?.color || "#7b93b8",
+    color: interpretation?.color || "#9fb1cb",
   };
 }
 
@@ -220,10 +222,10 @@ export function calcPPI(forecastAQI, currentAQI) {
 }
 
 export function ppiInterpretation(ppi) {
-  if (ppi == null) return { label: "Unknown", color: "#7b93b8" };
+  if (ppi == null) return { label: "Unknown", color: "#9fb1cb" };
   if (ppi < 0.8) return { label: "Improving", color: "#22c55e" };
   if (ppi <= 1.2) return { label: "Persistent", color: "#facc15" };
-  return { label: "Worsening", color: "#ef4444" };
+  return { label: "Worsening", color: "#f87171" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,21 +323,21 @@ export function riskLevel(iri) {
   if (iri <= 40) return { label: "Low",      color: "#a3e635", emoji: "" };
   if (iri <= 60) return { label: "Moderate",  color: "#facc15", emoji: "" };
   if (iri <= 80) return { label: "High",     color: "#f97316", emoji: "" };
-  return               { label: "Very High", color: "#ef4444", emoji: "" };
+  return               { label: "Very High", color: "#f87171", emoji: "" };
 }
 
 export function cardiovascularRisk(csi) {
   if (csi <= 20) return { label: "Low",      color: "#22c55e" };
   if (csi <= 40) return { label: "Moderate",  color: "#facc15" };
   if (csi <= 60) return { label: "Elevated",  color: "#f97316" };
-  return               { label: "High",     color: "#ef4444" };
+  return               { label: "High",     color: "#f87171" };
 }
 
 export function respiratoryRisk(rsi) {
   if (rsi <= 20) return { label: "Low",      color: "#22c55e" };
   if (rsi <= 40) return { label: "Moderate",  color: "#facc15" };
   if (rsi <= 60) return { label: "Elevated",  color: "#f97316" };
-  return               { label: "High",     color: "#ef4444" };
+  return               { label: "High",     color: "#f87171" };
 }
 
 export function cpmContribution(pollutants) {

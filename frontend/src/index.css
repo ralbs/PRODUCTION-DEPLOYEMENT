@@ -20,8 +20,12 @@
 
   /* ── text ── */
   --text:      #e8f0fe;
-  --text-sub:  #7b93b8;
-  --text-dim:  #3d526e;
+  /* WCAG AA: every text token >= 4.5:1 on every surface it sits on
+     (#0b0f1a #131929 #1a2234 #122530 #1b2d34 #182e3a). Before: --text-dim
+     #3d526e was 1.8-2.4:1 (22 axe failures), --text-sub #7b93b8 4.50 at worst.
+     Now --text-sub 6.46-8.77:1, --text-dim 4.55-6.18:1 -- still two tiers. */
+  --text-sub:  #9fb1cb;
+  --text-dim:  #8194ae;
 
   /* ── AQI category colours ── */
   --good:    #22c55e;
@@ -685,9 +689,11 @@ body {
 .alert-toast.toast-visible {
   opacity: 1; transform: translateY(0) scale(1); pointer-events: all;
 }
+/* Category colour is the accent bar, never the text: the Severe/Very Poor
+   end of the ramp is too dark to read on the dark toast. */
 .toast-title {
-  font-size: 13px; font-weight: 700; color: var(--toast-color, #f97316);
-  margin-bottom: 5px;
+  font-size: 13px; font-weight: 700; color: var(--text);
+  margin-bottom: 5px; padding-left: 10px; border-left: 4px solid var(--toast-color, #f97316);
 }
 .toast-body { font-size: 12px; color: var(--text-sub); line-height: 1.5; }
 .toast-close {

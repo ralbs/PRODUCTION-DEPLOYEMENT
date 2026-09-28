@@ -20,7 +20,7 @@ function fmtTs(ts) {
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: "#1a2234", border: "1px solid rgba(0,229,160,0.2)", borderRadius: 10, fontSize: 11 },
-  labelStyle: { color: "#7b93b8" },
+  labelStyle: { color: "#9fb1cb" } /* = --text-sub */,
 };
 
 export default function PollutantCharts({ history, chartType = "pm" }) {
