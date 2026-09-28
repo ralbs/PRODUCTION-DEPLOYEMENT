@@ -1,4 +1,4 @@
-const { calculateAQI, aqiCategory, sanitizePollutants } = require("./aqi");
+const { calculateAQI, aqiCategory, sanitizePollutants, cpcbConcentrations, subIndex } = require("./aqi");
 const Telemetry = require("../models/Telemetry");
 const deployment = require("../config/deployment");
 
@@ -262,19 +262,21 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
 // -------------------------------------------------------------------
 // checkSpike -- the source-direction worker's trigger
 // (ctm-core/scripts/source_direction_worker.py, via GET
-// /api/forecast/spike-check). WINDOWED rule, rises only:
+// /api/forecast/spike-check). WINDOWED rule, PER POLLUTANT, rises only.
+// For each CPCB pollutant's CONCENTRATION:
 //
 //   recent   = the last SPIKE_RECENT_MIN (the worker's own interval, so a
 //              short plume between two runs is still seen), as
 //              SPIKE_ROLLING_MIN rolling means; the HIGHEST one is tested
 //   baseline = the SPIKE_BASELINE_MIN before that: median, and a robust
-//              spread 1.4826*MAD (floored at 1 AQI)
-//   spike    = jump >= SPIKE_MIN_JUMP_AQI AND z >= SPIKE_Z,
-//              jump = peak rolling mean - baseline median, z = jump/spread
+//              spread 1.4826*MAD (floored at the channel's resolution)
+//   spike    = z >= SPIKE_Z (z = (peak - baseline median) / spread, in
+//              concentration) AND that pollutant's CPCB sub-index rose
+//              >= SPIKE_MIN_JUMP_AQI
 //
-// A drop never triggers (a falling reading isn't a new source). Too few
-// baseline or recent points -> null, which the route turns into a 404 and
-// the worker records as a skip.
+// Any pollutant triggers. A drop never triggers (a falling reading isn't a
+// new source). If no pollutant has enough baseline/recent points -> null,
+// which the route turns into a 404 and the worker records as a skip.
 //
 // It replaced a one-step Holt-Winters test on the single latest reading
 // with a +/-1 sigma band, which on steady 1-minute noise fired on ~29% of
@@ -287,75 +289,112 @@ const SPIKE_ROLLING_MIN_POINTS = 3;   // a "5-min mean" of 1-2 readings is just 
 const SPIKE_BASELINE_MIN = 60;
 const SPIKE_MIN_BASELINE_POINTS = 30; // half the hour at the 60 s device cadence
 const SPIKE_Z = 3;
-const SPIKE_MIN_JUMP_AQI = 20;
-const SPIKE_SIGMA_FLOOR_AQI = 1;
+const SPIKE_MIN_JUMP_AQI = 20;        // on the triggering pollutant's CPCB sub-index
 
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-// Pure: the rule itself, over {t, aqi} points oldest-first.
-function windowedSpike(points) {
+// PER POLLUTANT, IN CONCENTRATION. The AQI is max(sub-indices), so testing
+// it hides a large rise in any pollutant that isn't dominant (an NO2 plume
+// under a high PM2.5 AQI doesn't move the AQI at all), and its piecewise
+// slopes change the noise scale at every breakpoint. So each pollutant is
+// tested on its own concentration (where sensor noise lives), and the
+// +SPIKE_MIN_JUMP_AQI gate is applied to THAT pollutant's CPCB sub-index
+// (where health relevance lives). Any pollutant can trigger.
+const SPIKE_POLLUTANTS = ["pm2_5", "pm10", "no2", "o3", "co", "nh3"];
+// Spread floors at each channel's resolution: PMS5003 reports integer
+// ug/m3; gas channels are derived floats (ug/m3; CO in mg/m3).
+const SPIKE_SPREAD_FLOOR = { pm2_5: 1, pm10: 1, no2: 1, o3: 1, co: 0.01, nh3: 1 };
+
+// Pure: the windowed statistics over {t, v} points (oldest-first) of ONE
+// series. Returns null when there aren't enough points to judge.
+function windowedSpike(points, spreadFloor = 1) {
   if (!points.length) return null;
   const T = points[points.length - 1].t;
   const recentStart = T - SPIKE_RECENT_MIN * MIN_MS;
   const baseStart = recentStart - SPIKE_BASELINE_MIN * MIN_MS;
   const recent = points.filter((p) => p.t > recentStart);
-  const baseline = points.filter((p) => p.t > baseStart && p.t <= recentStart).map((p) => p.aqi);
+  const baseline = points.filter((p) => p.t > baseStart && p.t <= recentStart).map((p) => p.v);
   if (baseline.length < SPIKE_MIN_BASELINE_POINTS) return null;
 
   let peak = null;
   for (const p of recent) {
     const w = recent.filter((q) => q.t > p.t - SPIKE_ROLLING_MIN * MIN_MS && q.t <= p.t);
     if (w.length < SPIKE_ROLLING_MIN_POINTS) continue;
-    const mean = w.reduce((acc, q) => acc + q.aqi, 0) / w.length;
+    const mean = w.reduce((acc, q) => acc + q.v, 0) / w.length;
     if (!peak || mean > peak.mean) peak = { mean, t: p.t };
   }
   if (!peak) return null;
 
   const base = median(baseline);
-  const spread = Math.max(SPIKE_SIGMA_FLOOR_AQI, 1.4826 * median(baseline.map((x) => Math.abs(x - base))));
-  const jump = peak.mean - base;
-  const z = jump / spread;
-  return {
-    is_spike: jump >= SPIKE_MIN_JUMP_AQI && z >= SPIKE_Z,
-    peak_mean: peak.mean, peak_t: peak.t, baseline_median: base, spread, jump, z,
-    threshold: base + Math.max(SPIKE_Z * spread, SPIKE_MIN_JUMP_AQI),
-    baseline_points: baseline.length,
-  };
+  const spread = Math.max(spreadFloor, 1.4826 * median(baseline.map((x) => Math.abs(x - base))));
+  return { peak_mean: peak.mean, peak_t: peak.t, base, spread, z: (peak.mean - base) / spread, baseline_points: baseline.length };
+}
+
+// Pure: every pollutant's verdict, from readings [{t, conc}] oldest-first
+// (conc = aqi.js cpcbConcentrations()). `trigger` is the pollutant that
+// fired with the biggest sub-index jump, or, if none fired, the closest
+// (highest z) so near-misses are still reported.
+function perPollutantSpike(readings) {
+  const results = [];
+  for (const p of SPIKE_POLLUTANTS) {
+    const pts = readings.filter((r) => Number.isFinite(r.conc[p])).map((r) => ({ t: r.t, v: r.conc[p] }));
+    const w = windowedSpike(pts, SPIKE_SPREAD_FLOOR[p]);
+    if (!w) continue;
+    const siBase = subIndex(p, w.base) ?? 0, siPeak = subIndex(p, w.peak_mean) ?? 0;
+    const jump = siPeak - siBase;
+    results.push({
+      pollutant: p, ...w, si_base: siBase, si_peak: siPeak, jump_aqi: jump,
+      si_threshold: Math.max(subIndex(p, w.base + SPIKE_Z * w.spread) ?? 0, siBase + SPIKE_MIN_JUMP_AQI),
+      is_spike: w.z >= SPIKE_Z && jump >= SPIKE_MIN_JUMP_AQI,
+    });
+  }
+  if (!results.length) return null;
+  const fired = results.filter((r) => r.is_spike).sort((a, b) => b.jump_aqi - a.jump_aqi);
+  const trigger = fired[0] ?? [...results].sort((a, b) => b.z - a.z)[0];
+  return { is_spike: fired.length > 0, trigger, results };
 }
 
 const round1 = (x) => Math.round(x * 10) / 10;
+const round2 = (x) => Math.round(x * 100) / 100;
 
 async function checkSpike(stationId) {
   const docs = await recentDocs(stationId, (SPIKE_RECENT_MIN + SPIKE_BASELINE_MIN) * MIN_MS);
-  const points = docs
-    .map((d) => ({ t: new Date(d.timestamp).getTime(), aqi: calculateAQI(d.pollutants)?.aqi ?? null, ts: d.timestamp }))
-    .filter((p) => p.aqi != null && Number.isFinite(p.t));
-  const r = windowedSpike(points);
+  const readings = docs
+    .map((d) => ({ t: new Date(d.timestamp).getTime(), ts: d.timestamp, conc: cpcbConcentrations(d.pollutants) }))
+    .filter((r) => Number.isFinite(r.t));
+  const r = perPollutantSpike(readings);
   if (!r) return null;
+  const tr = r.trigger;
 
   return {
     station_id: stationId,
-    rule: "windowed",
+    rule: "windowed-per-pollutant",
     is_spike: r.is_spike,
+    pollutant: tr.pollutant,
     // Field names kept for the worker's trigger payload (SourceDirection
-    // requires all five). Meanings under the windowed rule:
-    actual_aqi: round1(r.peak_mean),          // highest 5-min rolling mean in the recent window
-    predicted_aqi: round1(r.baseline_median), // baseline median
-    predicted_low: round1(r.baseline_median), // rises only: there is no lower trigger bound
-    predicted_high: round1(r.threshold),      // the level the peak had to reach
-    sigma: round1(r.spread),                  // robust baseline spread
-    z: Math.round(r.z * 100) / 100,
-    jump_aqi: round1(r.jump),
-    baseline_points: r.baseline_points,
-    timestamp: points.find((p) => p.t === r.peak_t).ts, // reading that ends the peak window
+    // requires all five). All in the TRIGGERING pollutant's CPCB sub-index
+    // units, except sigma (its concentration units, see sigma_unit):
+    actual_aqi: round1(tr.si_peak),           // sub-index of the peak 5-min mean
+    predicted_aqi: round1(tr.si_base),        // sub-index of the baseline median
+    predicted_low: round1(tr.si_base),        // rises only: there is no lower trigger bound
+    predicted_high: round1(tr.si_threshold),  // sub-index the peak had to reach
+    sigma: tr.pollutant === "co" ? round2(tr.spread) : round1(tr.spread),
+    sigma_unit: tr.pollutant === "co" ? "mg/m3" : "ug/m3",
+    z: round2(tr.z),
+    jump_aqi: round1(tr.jump_aqi),
+    baseline_points: tr.baseline_points,
+    timestamp: readings.find((x) => x.t === tr.peak_t).ts, // reading that ends the peak window
+    // Every pollutant's verdict, for the record.
+    pollutants: Object.fromEntries(r.results.map((x) => [x.pollutant, { z: round2(x.z), jump_aqi: round1(x.jump_aqi), is_spike: x.is_spike }])),
   };
 }
 
 module.exports = {
-  buildForecast, checkSpike, windowedSpike, holtWinters, hourlyBuckets, contiguousHourlySeries,
+  buildForecast, checkSpike, windowedSpike, perPollutantSpike, holtWinters, hourlyBuckets, contiguousHourlySeries,
   MIN_REAL_HOURS, HW_PHI, AQI_MAX,
   SPIKE_RECENT_MIN, SPIKE_ROLLING_MIN, SPIKE_BASELINE_MIN, SPIKE_MIN_BASELINE_POINTS, SPIKE_Z, SPIKE_MIN_JUMP_AQI,
+  SPIKE_POLLUTANTS,
 };

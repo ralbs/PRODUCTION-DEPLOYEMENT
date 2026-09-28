@@ -116,11 +116,15 @@ def valid_stations(stations: list[dict]) -> list[dict]:
 
 def fetch_spike_check(base_url: str, station_id: str, lookback: int = 168) -> dict | None:
     """GET /api/forecast/spike-check -- the ONLY spike trigger this worker
-    uses. That endpoint calls backend/lib/forecast.js's checkSpike(),
-    which itself reuses holtWinters() (the same function buildForecast()
-    uses) -- nothing here reimplements Holt-Winters or invents a
+    uses. The rule lives entirely in backend/lib/forecast.js checkSpike()
+    (windowed, per pollutant); nothing here reimplements it or invents a
     threshold. Returns None on 404 (not enough data yet); raises on any
-    other HTTP error."""
+    other HTTP error.
+
+    Deploy-window compatibility: this worker reads only is_spike,
+    timestamp and the five trigger fields (present in every backend
+    version), and z / jump_aqi via .get() (None from older backends). The
+    `lookback` param is ignored by newer backends and harmless to send."""
     resp = _session.get(
         f"{base_url}/api/forecast/spike-check",
         params={"station_id": station_id, "lookback": lookback},

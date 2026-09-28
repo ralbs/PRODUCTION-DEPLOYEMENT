@@ -166,14 +166,14 @@ function aqiCategory(aqi) {
  *   All gas channels are already stored in µg/m³ (see units contract at top);
  *   mq135 is a unitless proxy and voc_gas_ohm is in Ω.
  */
-function calculateAQI(pollutants) {
-  if (!pollutants) return null;
-
-  const clean = sanitizePollutants(pollutants);
-
+// A reading's six CPCB pollutants, sanitised, in the units the CPCB
+// breakpoints use. One place, so the AQI and the spike rule
+// (lib/forecast.js checkSpike) can't convert differently.
+function cpcbConcentrations(pollutants) {
+  const clean = sanitizePollutants(pollutants || {});
   // CPCB breakpoints for CO are in mg/m³; the MQ-7 channel arrives in µg/m³.
   const coSource = clean.mq7_co != null ? clean.mq7_co : clean.co;
-  const concentrations = {
+  return {
     pm2_5: clean.pm2_5,
     pm10:  clean.pm10,
     no2:   clean.no2,   // µg/m³
@@ -183,6 +183,12 @@ function calculateAQI(pollutants) {
     // Only the six CPCB pollutants above. The four informational channels
     // are deliberately absent -- see informationalReadings() below.
   };
+}
+
+function calculateAQI(pollutants) {
+  if (!pollutants) return null;
+
+  const concentrations = cpcbConcentrations(pollutants);
 
   const subIndices = {};
   let dominant = null;
@@ -240,6 +246,6 @@ function informationalReadings(pollutants) {
 }
 
 module.exports = {
-  calculateAQI, sanitizePollutants, subIndex, aqiCategory, BREAKPOINTS,
+  calculateAQI, cpcbConcentrations, sanitizePollutants, subIndex, aqiCategory, BREAKPOINTS,
   informationalReadings, INFORMATIONAL_CHANNELS,
 };

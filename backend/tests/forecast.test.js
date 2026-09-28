@@ -2,8 +2,8 @@ jest.mock("../models/Telemetry");
 
 const Telemetry = require("../models/Telemetry");
 const {
-  buildForecast, checkSpike, windowedSpike, holtWinters, hourlyBuckets, contiguousHourlySeries,
-  MIN_REAL_HOURS, HW_PHI, AQI_MAX, SPIKE_Z, SPIKE_MIN_JUMP_AQI, SPIKE_MIN_BASELINE_POINTS,
+  buildForecast, checkSpike, windowedSpike, perPollutantSpike, holtWinters, hourlyBuckets, contiguousHourlySeries,
+  MIN_REAL_HOURS, HW_PHI, AQI_MAX, BAND_MIN_AQI, MAX_HORIZON_H, SPIKE_Z, SPIKE_MIN_JUMP_AQI, SPIKE_MIN_BASELINE_POINTS,
 } = require("../lib/forecast");
 const { calculateAQI } = require("../lib/aqi");
 
@@ -122,14 +122,64 @@ describe("checkSpike -- windowed rule (rises only)", () => {
   });
 
   test("jump alone isn't enough when the baseline itself is that noisy (z gate)", () => {
-    // Baseline alternating 40/80 (spread ~30 AQI); recent mean 85 is +25 over the median, z < 3.
-    const pts = [];
-    for (let i = 0; i < 60; i++) pts.push({ t: i * 60000, aqi: i % 2 ? 80 : 40 });
-    for (let i = 60; i < 75; i++) pts.push({ t: i * 60000, aqi: 85 });
-    const r = windowedSpike(pts);
-    expect(r.jump).toBeGreaterThanOrEqual(SPIKE_MIN_JUMP_AQI);
+    // PM10 (sub-index == concentration below 100) alternating 40/80 in the
+    // baseline (spread ~30); recent mean 85 is +25 sub-index over the median, z < 3.
+    const rd = [];
+    for (let i = 0; i < 60; i++) rd.push({ t: i * 60000, conc: { pm10: i % 2 ? 80 : 40 } });
+    for (let i = 60; i < 75; i++) rd.push({ t: i * 60000, conc: { pm10: 85 } });
+    const r = perPollutantSpike(rd).trigger;
+    expect(r.jump_aqi).toBeGreaterThanOrEqual(SPIKE_MIN_JUMP_AQI);
     expect(r.z).toBeLessThan(SPIKE_Z);
     expect(r.is_spike).toBe(false);
+  });
+});
+
+// The AQI is max(sub-indices): when the dominant pollutant changes, the AQI
+// moves without any one pollutant doing what the AQI suggests. The rule is
+// per pollutant, so it follows the pollutants, not the max.
+describe("checkSpike -- dominant-pollutant switches", () => {
+  afterEach(() => jest.clearAllMocks());
+  // 90 minutes, step at minute 80 (inside the recent window), small seeded
+  // jitter on every channel so spreads are real.
+  function mixed(before, after, seed = 7) {
+    const r = rng(seed); const out = [];
+    for (let i = 0; i < 90; i++) {
+      const lvl = i >= 80 ? after : before, p = {};
+      for (const [k, v] of Object.entries(lvl)) p[k] = Math.max(1, Math.round(v + 2 * gauss(r)));
+      out.push({ timestamp: new Date(SPIKE_T0 + i * 60000), pollutants: p, meta: {} });
+    }
+    return out;
+  }
+  const aqiOf = (p) => calculateAQI(p).aqi;
+
+  test("NO2 plume hidden under a higher PM2.5 AQI -> triggers on no2 (the AQI barely moves)", async () => {
+    const before = { pm2_5: 75, pm10: 90, no2: 40 }, after = { pm2_5: 75, pm10: 90, no2: 120 };
+    expect(Math.abs(aqiOf(after) - aqiOf(before))).toBeLessThan(SPIKE_MIN_JUMP_AQI); // invisible to an AQI rule
+    mockFind(mixed(before, after).reverse());
+    const r = await checkSpike("TEST-STATION");
+    expect(r.is_spike).toBe(true);
+    expect(r.pollutant).toBe("no2");
+    expect(r.jump_aqi).toBeGreaterThanOrEqual(SPIKE_MIN_JUMP_AQI);
+    expect(r.pollutants.pm2_5.is_spike).toBe(false);
+  });
+
+  test("dominant switches because PM2.5 FELL (AQI drops, PM10 now dominant) -> no trigger", async () => {
+    const before = { pm2_5: 75, pm10: 90 }, after = { pm2_5: 40, pm10: 90 };
+    expect(calculateAQI(before).dominant_pollutant).toBe("pm2_5");
+    expect(calculateAQI(after).dominant_pollutant).toBe("pm10");
+    mockFind(mixed(before, after).reverse());
+    const r = await checkSpike("TEST-STATION");
+    expect(r.is_spike).toBe(false);
+    expect(Object.values(r.pollutants).every((x) => !x.is_spike)).toBe(true);
+  });
+
+  test("PM10 rises past PM2.5 -> triggers on pm10 with pm10's own jump, not the smaller AQI jump", async () => {
+    const before = { pm2_5: 55, pm10: 60 }, after = { pm2_5: 55, pm10: 140 };
+    mockFind(mixed(before, after).reverse());
+    const r = await checkSpike("TEST-STATION");
+    expect(r.is_spike).toBe(true);
+    expect(r.pollutant).toBe("pm10");
+    expect(r.jump_aqi).toBeGreaterThan(aqiOf(after) - aqiOf(before)); // pm10 sub-index rose more than the AQI did
   });
 });
 

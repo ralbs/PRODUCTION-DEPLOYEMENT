@@ -368,6 +368,53 @@ def test_run_record_post_failure_is_an_error_not_a_skip():
     assert rec["reason"] == "post_failed: HTTP 500"
 
 
+# ---------------------------------------------------------------------
+# Deploy-window compatibility: the backend and this cron worker redeploy
+# independently, so for a while either can be the older one.
+# ---------------------------------------------------------------------
+# What a backend BEFORE the windowed rule returned (no z / jump_aqi).
+OLD_SHAPE_SPIKE = {k: v for k, v in SPIKE.items() if k not in ("z", "jump_aqi")}
+# What the per-pollutant backend returns: the same keys plus extras.
+NEW_SHAPE_SPIKE = {
+    **SPIKE, "rule": "windowed-per-pollutant", "pollutant": "no2", "sigma_unit": "ug/m3",
+    "baseline_points": 60, "pollutants": {"pm2_5": {"z": 0.4, "jump_aqi": 1.0, "is_spike": False},
+                                          "no2": {"z": 4.5, "jump_aqi": 90, "is_spike": True}},
+}
+
+
+def test_old_backend_response_still_makes_a_valid_run_record():
+    for spike in ({**OLD_SHAPE_SPIKE, "is_spike": False}, OLD_SHAPE_SPIKE):
+        with rm_module.Mocker() as m:
+            m.get(LIVE_WIND_BASE_URL, status_code=429)
+            result = _run(m, spike=spike, as_of=datetime.now(timezone.utc), use_live_wind=True)
+        rec = build_run_record(result, RAN_AT)
+        assert rec["spike_detected"] is spike["is_spike"]
+        assert rec["spike_z"] is None and rec["spike_jump_aqi"] is None  # absent -> None, never a crash
+
+
+def test_new_backend_response_extra_fields_are_ignored_by_the_record():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, status_code=429)
+        result = _run(m, spike=NEW_SHAPE_SPIKE, as_of=datetime.now(timezone.utc), use_live_wind=True)
+    rec = build_run_record(result, RAN_AT)
+    assert (rec["spike_z"], rec["spike_jump_aqi"]) == (4.5, 90)
+    assert set(rec) == {"station_id", "outcome", "reason", "wind_failure_reason", "spike_detected",
+                        "spike_timestamp", "spike_z", "spike_jump_aqi", "ran_at"}
+
+
+def test_ingest_payload_trigger_is_exactly_the_five_fields_for_either_shape():
+    # Real archive window (2025-08) so the real tracer runs and a POST happens.
+    for spike in (OLD_SHAPE_SPIKE, NEW_SHAPE_SPIKE):
+        with rm_module.Mocker() as m:
+            m.post(f"{BASE}/api/source-direction/ingest", status_code=201, json={"status": "success", "id": "x"})
+            out = _run(m, spike=spike, as_of=datetime(2025, 8, 2, 0, 0, tzinfo=timezone.utc), use_live_wind=False)
+            posts = [r for r in m.request_history if r.method == "POST"]
+        assert out["action"] == "ingested", out
+        trigger = posts[0].json()["trigger"]
+        assert set(trigger) == {"actual_aqi", "predicted_aqi", "predicted_low", "predicted_high", "sigma"}
+        assert all(isinstance(v, (int, float)) for v in trigger.values())
+
+
 def test_post_run_record_uses_worker_auth_headers():
     with rm_module.Mocker() as m:
         m.post(f"{BASE}/api/source-direction/runs", status_code=201, json={"status": "success"})
