@@ -21,3 +21,6 @@ firmware/secrets.h
 .vscode/
 *.swp
 .vercel
+
+# --- local tooling output ---
+.gstack/browse-reports/
