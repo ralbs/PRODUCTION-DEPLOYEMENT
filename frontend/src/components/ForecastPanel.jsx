@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { buildForecastChartData, MIN_REAL_HOURS } from "../lib/forecastChart";
 import ConfidenceBadge from "./ConfidenceBadge";
+import { voiceSummary } from "../lib/healthGuidance";
 
 const VOICE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -36,30 +37,39 @@ const EMPTY_MESSAGE = {
   error: "Forecast unavailable right now. Couldn't reach the forecast service; it will retry automatically.",
 };
 
-export default function ForecastPanel({ forecast, status = "loading", voiceEnabled }) {
+// `reading` = { station, aqi, stale, age } from the hero model, so what is
+// spoken follows the same staleness rule as what is shown. The words come
+// from lib/healthGuidance.js voiceSummary() -- the backend no longer sends
+// any spoken text (its old voice_text carried unpublished advice).
+export default function ForecastPanel({ forecast, status = "loading", voiceEnabled, reading }) {
   const [speaking, setSpeaking] = useState(false);
   const intervalRef = useRef(null);
+  const spoken = voiceSummary({
+    ...reading,
+    trend: forecast?.trend, horizonHours: forecast?.horizon_hours,
+    peak: forecast?.peak_predicted, peakTime: forecast?.peak_time,
+  });
 
   const doSpeak = useCallback(() => {
-    if (!forecast?.voice_text) return;
+    if (!spoken) return;
     setSpeaking(true);
-    speak(forecast.voice_text);
+    speak(spoken);
     const utt = window.speechSynthesis;
     // Detect end of speech
     const check = setInterval(() => {
       if (!utt.speaking) { setSpeaking(false); clearInterval(check); }
     }, 300);
-  }, [forecast]);
+  }, [spoken]);
 
   // Auto-speak every 5 min when voice enabled
   useEffect(() => {
     clearInterval(intervalRef.current);
-    if (voiceEnabled && forecast) {
+    if (voiceEnabled && spoken) {
       doSpeak();
       intervalRef.current = setInterval(doSpeak, VOICE_INTERVAL_MS);
     }
     return () => clearInterval(intervalRef.current);
-  }, [voiceEnabled, forecast?.generated_at]);
+  }, [voiceEnabled, forecast?.generated_at, reading?.aqi, reading?.stale]);
 
   if (!forecast) {
     return (
@@ -175,7 +185,7 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
         background: "rgba(79,142,247,0.06)", border: "1px solid rgba(79,142,247,0.12)",
         fontSize: 11, color: "var(--text-sub)", lineHeight: 1.6,
       }}>
-        {forecast.voice_text}
+        {spoken}
       </div>
     </div>
   );

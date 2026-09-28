@@ -4,6 +4,7 @@ import {
   computeAllIndices, riskLevel, cardiovascularRisk, respiratoryRisk,
   cpmContribution, CRP_REFERENCE,
 } from "../lib/healthIndices";
+import { advisory } from "../lib/healthGuidance";
 
 function Ring({ value = 0, max = 100, size = 64, stroke = 5, color = "#00e5a0", label }) {
   const r = (size - stroke) / 2;
@@ -82,11 +83,11 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
   const respRisk = respiratoryRisk(indices.rsi);
   const p = latest?.pollutants || {};
 
-  const riskAdvice = indices.iri <= 20 ? "Air is clean — safe for all outdoor activities."
-    : indices.iri <= 40 ? "Mild concern for sensitive groups. Most people are fine outdoors."
-    : indices.iri <= 60 ? "Limit prolonged outdoor exertion, especially for sensitive groups."
-    : indices.iri <= 80 ? "Reduce outdoor activity. Sensitive groups should stay indoors."
-    : "High risk — minimize outdoor exposure. Use air purifiers if available.";
+  // No advice of this panel's own: IRI/CAWI are this dashboard's composite
+  // scores, not published indices, so the only health wording shown is
+  // CPCB's impact for the current AQI (lib/healthGuidance.js).
+  const cpcb = advisory(latest?.aqi?.aqi);
+  const riskAdvice = cpcb ? `CPCB health impact at the current AQI (${cpcb.category}): ${cpcb.impact}.` : null;
 
   return (
     <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -128,8 +129,8 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
           sub="PM2.5 × breathing rate × 24h" color="#38bdf8"
           tip="Total PM2.5 inhaled over 24 hours at normal breathing rate" />
         <Card label="Clean Air Window" value={indices.cawi} unit="%"
-          sub={indices.cawi >= 70 ? "Good time outdoors" : indices.cawi >= 40 ? "Limit outdoor time" : "Stay indoors"}
-          color="#00e5a0" tip="How safe it is to be outside right now" />
+          sub={indices.cawi >= 70 ? "High" : indices.cawi >= 40 ? "Medium" : "Low"}
+          color="#00e5a0" tip="100 minus the Inflammatory Risk Index (this dashboard's composite score)" />
       </div>
 
       {/* CRP breakdown + pollutant contributions */}
@@ -239,7 +240,7 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>
-              Should You Go Outside?
+              Clean Air Window
             </div>
             <div style={{
               padding: "10px 14px", borderRadius: 10,
@@ -250,9 +251,8 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
                 {indices.cawi}%
               </div>
               <div style={{ fontSize: 11, color: "var(--text-sub)" }}>
-                {indices.cawi >= 70 ? "Great time for outdoor exercise, school, or commuting." :
-                 indices.cawi >= 40 ? "OK for short outdoor activities. Limit strenuous exercise." :
-                 "Avoid going outside if possible. Keep windows closed."}
+                100 − IRI. A composite score computed by this dashboard, not a CPCB or WHO index,
+                and not advice -- see the CPCB health impact above.
               </div>
             </div>
           </div>

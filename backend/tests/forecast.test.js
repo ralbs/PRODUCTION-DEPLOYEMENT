@@ -478,3 +478,11 @@ describe("forecast honesty -- MIN_REAL_HOURS, residual band, damping, local hour
     expect(fmt(ist)).toBe("10:00");
   });
 });
+
+test("forecast response carries no spoken or health-advice text (frontend healthGuidance.js owns it)", async () => {
+  const t0 = new Date("2026-09-10T00:00:00+05:30").getTime();
+  mockFind([200, 230, 260, 290, 320, 350].map((v, i) => ({ timestamp: new Date(t0 + i * 3600e3), pollutants: { pm10: v } })).reverse());
+  const r = await buildForecast("TEST-STATION");
+  expect(r).not.toHaveProperty("voice_text");
+  expect(JSON.stringify(r)).not.toMatch(/indoors|outdoor|mask|avoid|window|purifier/i);
+});

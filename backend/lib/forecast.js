@@ -215,28 +215,10 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   const peakIdx = hw.forecast.indexOf(peak);
   const peakTime = localTimeLabel(lastTs.getTime() + (peakIdx + 1) * HOUR_MS);
 
-  const station = stationId.replace("KSPCB-", "");
-  const curAqi = currentAQI?.aqi ?? "–";
-  const curCat = currentAQI?.category ?? "Unknown";
-  const dom = (currentAQI?.dominant_pollutant || "PM2.5").toUpperCase().replace("_", ".");
-
-  let voiceText =
-    `Air quality at ${station} station is currently ${curAqi}, ${curCat}. ` +
-    `The dominant pollutant is ${dom}. ` +
-    `Extrapolating the recent trend, the next 24 hours look ${trend}. `;
-
-  if (peak > (currentAQI?.aqi ?? 0)) {
-    voiceText += `The extrapolated peak is AQI ${peak} around ${peakTime}. `;
-  }
-
-  if (peak > 300)
-    voiceText += "Severe air quality expected. Avoid all outdoor activities.";
-  else if (peak > 200)
-    voiceText += "Poor air quality expected. Sensitive groups should stay indoors.";
-  else if (peak > 100)
-    voiceText += "Moderate air quality expected. Consider reducing prolonged outdoor exposure.";
-  else
-    voiceText += "Air quality should remain acceptable throughout the forecast period.";
+  // No spoken or health text here: the dashboard builds all of it from
+  // frontend/src/lib/healthGuidance.js (CPCB's published wording). The old
+  // voice_text added advice CPCB doesn't publish ("Sensitive groups should
+  // stay indoors", "Avoid all outdoor activities").
 
   // History for the chart: the last 24 real hourly buckets, each at its own
   // hour (gaps stay gaps -- interpolated fit points are never shown as
@@ -270,7 +252,6 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
       band_min_aqi: BAND_MIN_AQI,
       sigma: Math.round(hw.sigma * 10) / 10,
     },
-    voice_text: voiceText,
     generated_at: new Date().toISOString(),
   };
 }

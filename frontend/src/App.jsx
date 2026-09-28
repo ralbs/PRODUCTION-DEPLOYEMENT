@@ -21,7 +21,7 @@ import SourceDirectionPanel   from "./components/SourceDirectionPanel";
 import { useLiveWind } from "./lib/useLiveWind";
 import { plumeCardMeta } from "./lib/plumeCardMeta";
 import { SOURCE_DIRECTION_CADENCE_MIN } from "./lib/lastRun";
-import { buildHeroModel } from "./lib/heroModel";
+import { buildHeroModel, fmtAge } from "./lib/heroModel";
 import { loadSensitivity, saveSensitivity } from "./lib/sensitivity";
 
 const REFRESH_MS  = 60_000;
@@ -345,7 +345,9 @@ export default function App() {
           </FullscreenCard>
 
           <FullscreenCard title="Trend Extrapolation" icon={<ForecastIcon />} meta="statistical, not a physics model">
-            <ForecastPanel forecast={forecast} status={forecastStatus} voiceEnabled={voiceEnabled} />
+            <ForecastPanel forecast={forecast} status={forecastStatus} voiceEnabled={voiceEnabled}
+              reading={{ station: stationName, aqi: heroModel.aqi, stale: heroModel.mode === "stale",
+                age: heroModel.ageMs != null ? fmtAge(heroModel.ageMs) : null }} />
           </FullscreenCard>
 
           <FullscreenCard title="Source Direction" icon={<DirectionIcon />}

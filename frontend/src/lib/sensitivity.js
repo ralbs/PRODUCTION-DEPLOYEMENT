@@ -4,7 +4,7 @@
 // The threshold applies to the CPCB AQI the hero leads with (HERO_SPEC.md
 // s.1). The presets are not invented numbers -- each is the lower edge of
 // the first CPCB category whose published impact (National AQI report,
-// 2014, p.38; strings in heroModel.js CPCB) names that group:
+// 2014, p.38; strings in lib/healthGuidance.js) names that group:
 //   sensitive -> Satisfactory (51): "...minor breathing discomfort to
 //                sensitive people"
 //   general   -> Poor (201): "...breathing discomfort to people on

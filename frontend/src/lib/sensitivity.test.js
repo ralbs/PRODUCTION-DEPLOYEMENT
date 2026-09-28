@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PRESETS, resolveSensitivity, loadSensitivity, saveSensitivity, personalLine } from "./sensitivity.js";
-import { cpcbBand } from "./heroModel.js";
+import { cpcbBand } from "./healthGuidance.js";
 
 const memStore = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)) }; };
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
 
-const LEVELS = [
-  { threshold: 300, label: "Very Poor", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.3)" },
-  { threshold: 200, label: "Poor",      color: "#f97316", bg: "rgba(249,115,22,0.12)", border: "rgba(249,115,22,0.3)" },
-  { threshold: 100, label: "Moderate",  color: "#facc15", bg: "rgba(250,204,21,0.12)", border: "rgba(250,204,21,0.3)" },
-];
+import { crossingAlert } from "../lib/healthGuidance";
+import { aqiToRgb } from "../lib/aqiColor";
 
+// Fires when the AQI crosses UP into a worse CPCB category. Text comes from
+// lib/healthGuidance.js: real category edges (101/201/301/401 -- it used to
+// call 300 "Very Poor" and 100 "Moderate") and CPCB's impact wording, not
+// the old unsourced "Health risk elevated."
 export default function AlertToast({ aqi, station }) {
   const toastRef    = useRef(null);
   const prevAQI     = useRef(null);
@@ -18,22 +19,19 @@ export default function AlertToast({ aqi, station }) {
     prevAQI.current = val;
     if (prev == null) return;  // first load — don't alert
 
-    // Check if we crossed a threshold upward
-    const crossed = LEVELS.find(
-      (l) => val >= l.threshold && prev < l.threshold
-    );
-    if (!crossed) return;
+    const alert = crossingAlert(prev, val, station?.replace("KSPCB-", ""));
+    if (!alert) return;
 
     // Show toast
     const el = toastRef.current;
     if (!el) return;
-    el.dataset.level = crossed.label;
-    el.style.setProperty("--toast-color",  crossed.color);
-    el.style.setProperty("--toast-bg",     crossed.bg);
-    el.style.setProperty("--toast-border", crossed.border);
-    el.querySelector(".toast-title").textContent = `⚠ AQI crossed ${crossed.threshold} — ${crossed.label}`;
-    el.querySelector(".toast-body").textContent  =
-      `${station?.replace("KSPCB-", "") ?? "Station"} AQI is now ${val}. Health risk elevated.`;
+    const [r, g, b] = aqiToRgb(val) || [239, 68, 68];
+    el.dataset.level = alert.category;
+    el.style.setProperty("--toast-color",  `rgb(${r},${g},${b})`);
+    el.style.setProperty("--toast-bg",     `rgba(${r},${g},${b},0.12)`);
+    el.style.setProperty("--toast-border", `rgba(${r},${g},${b},0.3)`);
+    el.querySelector(".toast-title").textContent = `⚠ ${alert.title}`;
+    el.querySelector(".toast-body").textContent  = alert.body;
     el.classList.add("toast-visible");
 
     clearTimeout(timerRef.current);

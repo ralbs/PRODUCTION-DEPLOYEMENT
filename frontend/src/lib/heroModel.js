@@ -1,10 +1,11 @@
 // What the hero says -- pure logic, per docs/HERO_SPEC.md. Every string is
-// either quoted from a primary source (CPCB's National AQI report) or built
+// either from lib/healthGuidance.js (CPCB's published wording) or built
 // from real data; nothing here states more than the data supports.
 import { aqiToRgb } from "./aqiColor.js";
 import { isInconclusive } from "./sourceDirection.js";
 import { personalLine, resolveSensitivity } from "./sensitivity.js";
 import { MIN_REAL_HOURS } from "./forecastChart.js";
+import { cpcbBand } from "./healthGuidance.js";
 
 // The device reports every 60 s (firmware/config.h TELEMETRY_INTERVAL_MS).
 // Past 10x that, the hero stops speaking in the present tense.
@@ -12,26 +13,9 @@ export const STALE_AFTER_MIN = 10;
 const TREND_HORIZON_H = 2;
 const SPIKE_FRESH_H = 2;
 
-// CPCB category thresholds (backend/lib/aqi.js aqiCategory()), with CPCB's
-// "Associated Health Impacts", verbatim from the National AQI report (2014)
-// p.38. CPCB publishes impacts, not actions -- so no actions are invented.
-export const CPCB = [
-  { max: 50,  category: "Good", headline: "Air quality is Good.", impact: "Minimal Impact" },
-  { max: 100, category: "Satisfactory", headline: "Air quality is Satisfactory.",
-    impact: "May cause minor breathing discomfort to sensitive people" },
-  { max: 200, category: "Moderately polluted", headline: "Air is moderately polluted.",
-    impact: "May cause breathing discomfort to the people with lung disease such as asthma and discomfort to people with heart disease, children and older adults" },
-  { max: 300, category: "Poor", headline: "Air quality is Poor.",
-    impact: "May cause breathing discomfort to people on prolonged exposure and discomfort to people with heart disease with short exposure" },
-  { max: 400, category: "Very Poor", headline: "Air quality is Very Poor.",
-    impact: "May cause respiratory illness to the people on prolonged exposure. Effect may be more pronounced in people with lung and heart diseases" },
-  { max: Infinity, category: "Severe", headline: "Air quality is Severe.",
-    impact: "May cause respiratory effects even on healthy people and serious health impacts on people with lung/heart diseases. The health impacts may be experienced even during light physical activity" },
-];
-
-export function cpcbBand(aqi) {
-  return CPCB.find((b) => aqi <= b.max);
-}
+// CPCB category, headline and verbatim health impact all come from the
+// one guidance module -- the hero never words health text itself.
+export { cpcbBand } from "./healthGuidance.js";
 
 const HOUR = 3600e3;
 

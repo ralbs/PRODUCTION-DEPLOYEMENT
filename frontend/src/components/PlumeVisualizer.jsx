@@ -1,3 +1,4 @@
+import { NAAQS } from "../lib/healthGuidance";
 import { useState, useEffect, useMemo } from "react";
 import { api } from "../api";
 import ConfidenceBadge from "./ConfidenceBadge";
@@ -187,11 +188,8 @@ export default function PlumeVisualizer({ latest, wind = { status: "loading", da
                 {result.maxC_ugm3.toFixed(1)} µg/m³</strong> is expected{" "}
               <strong style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
                 {result.peakX_m}m</strong> downwind.
-              {" "}{result.maxC_ugm3 > 60
-                ? "This exceeds healthy limits — sensitive groups should avoid outdoor activity in the downwind area."
-                : result.maxC_ugm3 > 30
-                ? "Moderate levels — sensitive individuals may want to limit prolonged outdoor activity downwind."
-                : "Levels are within acceptable range for most people."}
+              {" "}For reference, CPCB's PM2.5 standard is {NAAQS.pm2_5.standard} as a{" "}
+              {NAAQS.pm2_5.period} average -- a modelled peak is not directly comparable to it.
             </p>
           </div>
         )}
