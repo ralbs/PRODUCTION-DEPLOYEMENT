@@ -14,7 +14,7 @@ const hourStart = Math.floor((NOW - 2 * MIN) / H) * H;
 
 function mockForecast(hist, trend, preds) {
   return {
-    trend, resolution_minutes: 60, generated_at: iso(NOW - 12 * MIN),
+    trend, resolution_minutes: 60, real_hours: hist.length, generated_at: iso(NOW - 12 * MIN),
     history_aqi: hist.map((aqi, i) => ({ timestamp: iso(hourStart - (hist.length - 1 - i) * H), aqi })),
     predictions: preds.map(([aqi, lo, hi], i) => ({ timestamp: iso(hourStart + (i + 1) * H), aqi, aqi_low: lo, aqi_high: hi })),
   };

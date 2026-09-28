@@ -13,6 +13,9 @@
 // would silently join its neighbours) and never coerced to 0.
 
 export const HISTORY_POINTS = 12;
+// Same floor as the backend (lib/forecast.js MIN_REAL_HOURS): below it no
+// extrapolated line or band is drawn, even if a response carried one.
+export const MIN_REAL_HOURS = 6;
 
 export function buildForecastChartData(forecast) {
   if (!forecast) return [];
@@ -22,7 +25,8 @@ export function buildForecastChartData(forecast) {
     .map((h) => ({ t: Date.parse(h.timestamp), historical: h.aqi ?? null }))
     .filter((r) => Number.isFinite(r.t));
 
-  const fcast = (forecast.predictions || [])
+  const enough = Number.isFinite(forecast.real_hours) && forecast.real_hours >= MIN_REAL_HOURS;
+  const fcast = (enough ? forecast.predictions || [] : [])
     .map((p) => ({
       t: Date.parse(p.timestamp),
       forecast: p.aqi,
@@ -34,7 +38,7 @@ export function buildForecastChartData(forecast) {
   // Start the dashed forecast line from the last REAL reading, so it
   // visually continues the history. Skip trailing nulls rather than
   // starting the forecast line from a missing value.
-  for (let k = hist.length - 1; k >= 0; k--) {
+  for (let k = hist.length - 1; fcast.length && k >= 0; k--) {
     if (hist[k].historical !== null) {
       hist[k] = { ...hist[k], forecast: hist[k].historical };
       break;

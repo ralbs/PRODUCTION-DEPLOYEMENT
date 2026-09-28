@@ -1,15 +1,19 @@
 // Run: npm test  (node's built-in runner -- no test framework dependency)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildForecastChartData } from "./forecastChart.js";
+import { buildForecastChartData, MIN_REAL_HOURS } from "./forecastChart.js";
 
 const T0 = Date.parse("2026-09-10T00:00:00Z");
 const H = 3600 * 1000;
 const iso = (ms) => new Date(ms).toISOString();
+// Fixtures carry real_hours at the floor so predictions are drawn; the
+// gate itself is tested at the bottom.
+const REAL = { real_hours: MIN_REAL_HOURS };
 
 test("irregular gaps: each point sits at its reading's ACTUAL time, not a constant step per index", () => {
   const offsetsH = [1, 3, 4, 9]; // gaps of 2h, 1h, 5h -- deliberately uneven
   const forecast = {
+    ...REAL,
     history_aqi: offsetsH.map((h, i) => ({ timestamp: iso(T0 + h * H), aqi: 60 + i })),
     predictions: [{ timestamp: iso(T0 + 10 * H), aqi: 70, aqi_low: 60, aqi_high: 80 }],
   };
@@ -39,6 +43,7 @@ test("null AQI mid-history: kept as null at its own time -- not dropped, not 0, 
     { h: 0, aqi: 50 }, { h: 1, aqi: 52 }, { h: 2, aqi: null }, { h: 3, aqi: 54 }, { h: 4, aqi: 56 },
   ];
   const forecast = {
+    ...REAL,
     history_aqi: readings.map((r) => ({ timestamp: iso(T0 + r.h * H), aqi: r.aqi })),
     predictions: [{ timestamp: iso(T0 + 5 * H), aqi: 58, aqi_low: 50, aqi_high: 66 }],
   };
@@ -51,16 +56,32 @@ test("null AQI mid-history: kept as null at its own time -- not dropped, not 0, 
 });
 
 test("a real AQI of 0 stays 0 -- the null handling must not swallow genuine zeros", () => {
-  const forecast = { history_aqi: [{ timestamp: iso(T0), aqi: 0 }], predictions: [] };
+  const forecast = { ...REAL, history_aqi: [{ timestamp: iso(T0), aqi: 0 }], predictions: [] };
   assert.strictEqual(buildForecastChartData(forecast)[0].historical, 0);
 });
 
 test("forecast line starts from the last REAL reading when the newest reading is null", () => {
   const forecast = {
+    ...REAL,
     history_aqi: [{ timestamp: iso(T0), aqi: 61 }, { timestamp: iso(T0 + H), aqi: null }],
     predictions: [{ timestamp: iso(T0 + 2 * H), aqi: 63, aqi_low: 55, aqi_high: 71 }],
   };
   const rows = buildForecastChartData(forecast);
   assert.equal(rows.find((r) => r.t === T0).forecast, 61);
   assert.equal(rows.find((r) => r.t === T0 + H).forecast, undefined);
+});
+
+test("MIN_REAL_HOURS gate: no extrapolated line or band below it, drawn at/above it", () => {
+  const f = (real_hours) => ({
+    real_hours,
+    history_aqi: [0, 1, 2].map((h) => ({ timestamp: iso(T0 + h * H), aqi: 60 + h })),
+    predictions: [{ timestamp: iso(T0 + 3 * H), aqi: 63, aqi_low: 55, aqi_high: 71 }],
+  });
+  for (const below of [undefined, null, 0, MIN_REAL_HOURS - 1]) {
+    const rows = buildForecastChartData(f(below));
+    assert.equal(rows.some((r) => "band" in r || "forecast" in r), false, String(below));
+    assert.equal(rows.filter((r) => "historical" in r).length, 3); // history still shown
+  }
+  const rows = buildForecastChartData(f(MIN_REAL_HOURS));
+  assert.equal(rows.filter((r) => "band" in r).length, 1);
 });

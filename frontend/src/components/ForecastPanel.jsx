@@ -3,7 +3,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from "recharts";
-import { buildForecastChartData } from "../lib/forecastChart";
+import { buildForecastChartData, MIN_REAL_HOURS } from "../lib/forecastChart";
+import ConfidenceBadge from "./ConfidenceBadge";
 
 const VOICE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -31,7 +32,7 @@ const TREND_ICON = {
 
 const EMPTY_MESSAGE = {
   loading: "Loading forecast…",
-  not_found: "Not enough readings to forecast yet. The Holt-Winters forecast needs at least 3 readings with a computable AQI, and this station doesn't have that many.",
+  not_found: `Not enough data to extrapolate yet. The trend extrapolation needs at least ${MIN_REAL_HOURS} real hours of readings in a row, and this station doesn't have that many.`,
   error: "Forecast unavailable right now. Couldn't reach the forecast service; it will retry automatically.",
 };
 
@@ -63,7 +64,7 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
   if (!forecast) {
     return (
       <div className="forecast-section">
-        <div className="card-title">AI Forecast · 24h</div>
+        <div className="card-title">Trend extrapolation · 24h</div>
         <div style={{ color: "var(--text-sub)", fontSize: 12, padding: "20px 0", lineHeight: 1.6 }}>
           {EMPTY_MESSAGE[status] ?? EMPTY_MESSAGE.loading}
         </div>
@@ -80,7 +81,11 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
     <div className="forecast-section">
       <div className="forecast-header">
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>AI Forecast · 24h (Holt-Winters)</div>
+          <div className="card-title" style={{ marginBottom: 0 }}>Trend extrapolation · 24h</div>
+          {/* Structural ESTIMATED treatment (root CLAUDE.md): this is the
+              recent trend carried forward, not a model of the atmosphere. */}
+          <ConfidenceBadge state="estimated" label="STATISTICAL EXTRAPOLATION"
+            timestamp={forecast.generated_at} cadenceMinutes={5} />
           <div className="forecast-meta">
             <span className={`trend-badge ${trendClass}`}>
               {TREND_ICON[trend] || "→"} {trend.charAt(0).toUpperCase() + trend.slice(1)}
@@ -133,12 +138,12 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
               default 0.6 fill-opacity over a non-bg-deep card, so the band
               read as 0..high instead of low..high. */}
           <Area dataKey="band" fill="rgba(79,142,247,0.14)" fillOpacity={1} stroke="none"
-            name="Forecast range" legendType="none" isAnimationActive={false} />
+            name="±1 SD range" isAnimationActive={false} />
 
           {/* Forecast line */}
           <Line
             dataKey="forecast" stroke="#4f8ef7" strokeWidth={2} dot={false}
-            strokeDasharray="6 3" name="Forecast AQI"
+            strokeDasharray="6 3" name="Extrapolated AQI"
             style={{ filter: "drop-shadow(0 0 4px rgba(79,142,247,0.4))" }}
           />
 
@@ -149,6 +154,12 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
           />
         </ComposedChart>
       </ResponsiveContainer>
+
+      <div style={{ marginTop: 6, fontSize: 10, color: "var(--text-sub)", lineHeight: 1.5 }}>
+        Dashed line: the last {forecast.real_hours ?? "–"} hours' trend carried forward (Holt, trend damped
+        so it levels off). Shaded: ±1 SD of its own one-hour-ahead misses, widening with time.
+        It cannot anticipate a new source or a weather change.
+      </div>
 
       {/* Voice summary text */}
       <div style={{

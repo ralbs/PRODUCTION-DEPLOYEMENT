@@ -4,6 +4,7 @@
 import { aqiToRgb } from "./aqiColor.js";
 import { isInconclusive } from "./sourceDirection.js";
 import { personalLine, resolveSensitivity } from "./sensitivity.js";
+import { MIN_REAL_HOURS } from "./forecastChart.js";
 
 // The device reports every 60 s (firmware/config.h TELEMETRY_INTERVAL_MS).
 // Past 10x that, the hero stops speaking in the present tense.
@@ -73,7 +74,11 @@ export function trendClause(forecast, readingAtMs) {
   const hist = (forecast.history_aqi || [])
     .map((h) => ({ t: Date.parse(h.timestamp), aqi: h.aqi }))
     .filter((h) => Number.isFinite(h.t) && h.aqi != null);
-  if (hist.length < 6) return { text: null, why: "too_few_points" };
+  // MIN_REAL_HOURS: the server must declare that many real (not
+  // interpolated) hours, AND the history must show them.
+  if (!(forecast.real_hours >= MIN_REAL_HOURS) || hist.length < MIN_REAL_HOURS) {
+    return { text: null, why: "too_few_points" };
+  }
 
   const gaps = hist.slice(1).map((h, i) => h.t - hist[i].t).sort((a, b) => a - b);
   const median = gaps[Math.floor(gaps.length / 2)];
