@@ -18,16 +18,17 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/forecast/spike-check?station_id=KSPCB-Hebbal&lookback=168
-// Used by scripts/source_direction_worker.py as the spike trigger --
-// reuses checkSpike() (which itself reuses holtWinters()), never a
-// separately-invented threshold.
+// GET /api/forecast/spike-check?station_id=NEL-001
+// Used by scripts/source_direction_worker.py as the spike trigger -- the
+// windowed rule in lib/forecast.js checkSpike() (its constants and why are
+// documented there). A `lookback` param from older workers is ignored: the
+// rule's windows are fixed by its own named constants.
 router.get("/spike-check", async (req, res) => {
-  const { station_id, lookback = 168 } = req.query;
+  const { station_id } = req.query;
   if (!station_id) return res.status(400).json({ error: "station_id query param required" });
 
   try {
-    const result = await checkSpike(station_id, Number(lookback));
+    const result = await checkSpike(station_id);
     if (!result) return res.status(404).json({ error: "Not enough data to check for a spike" });
     res.json(result);
   } catch (err) {
