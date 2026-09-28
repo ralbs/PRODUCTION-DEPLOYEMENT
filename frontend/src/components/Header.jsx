@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { DEPLOYMENT } from "../lib/deployment";
+import { liveStatus } from "../lib/liveStatus";
 
 /* ── Live clock ── */
 function Clock() {
@@ -59,7 +60,8 @@ function FullscreenBtn() {
   }, []);
 
   return (
-    <button className="icon-btn" onClick={toggle} title={fs ? "Exit fullscreen" : "Enter fullscreen (F11)"}>
+    <button className="icon-btn fullscreen-btn" onClick={toggle} title={fs ? "Exit fullscreen" : "Enter fullscreen (F11)"}
+      aria-label={fs ? "Exit fullscreen" : "Enter fullscreen"}>
       {fs ? (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
@@ -75,7 +77,9 @@ function FullscreenBtn() {
   );
 }
 
-export default function Header({ voiceEnabled, onVoiceToggle }) {
+export default function Header({ voiceEnabled, onVoiceToggle, lastReadingAt, nowMs }) {
+  // Same freshness rule as the hero -- never a hard-coded "LIVE".
+  const status = liveStatus(lastReadingAt, nowMs);
   return (
     <header className="header">
       {/* Brand */}
@@ -89,10 +93,14 @@ export default function Header({ voiceEnabled, onVoiceToggle }) {
 
       {/* Right controls */}
       <div className="header-right">
-        <div className="live-badge">
-          <span className="live-dot" />
-          LIVE
-        </div>
+        {status && (
+          <div className={status.live ? "live-badge" : "offline-badge"} data-testid="header-status"
+            title={status.live ? "Latest reading is current" : `No reading for ${status.age.replace(" ago", "")} -- showing the last one`}>
+            <span className={status.live ? "live-dot" : "offline-dot"} />
+            {status.label}
+            {!status.live && <span className="offline-age">{status.age}</span>}
+          </div>
+        )}
 
         <Clock />
 
@@ -101,6 +109,7 @@ export default function Header({ voiceEnabled, onVoiceToggle }) {
           className={`icon-btn${voiceEnabled ? " active" : ""}`}
           onClick={onVoiceToggle}
           title={voiceEnabled ? "Voice ON — click to disable" : "Enable voice alerts"}
+          aria-label={voiceEnabled ? "Voice alerts on" : "Voice alerts off"}
         >
           {voiceEnabled ? (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -113,7 +122,7 @@ export default function Header({ voiceEnabled, onVoiceToggle }) {
               <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
             </svg>
           )}
-          {voiceEnabled ? "Voice On" : "Voice"}
+          <span className="icon-btn-label">{voiceEnabled ? "Voice On" : "Voice"}</span>
         </button>
 
         {/* App fullscreen */}

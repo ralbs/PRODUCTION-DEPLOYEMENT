@@ -301,7 +301,8 @@ export default function App() {
       <KeyboardShortcuts stations={stations} selected={selected} onSelect={setSelected}
         onVoiceToggle={() => setVoiceEnabled((v) => !v)} onRefresh={refreshStation} />
       <AlertToast aqi={latest?.aqi} station={selected} />
-      <Header voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)} />
+      <Header voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)}
+        lastReadingAt={latest?.timestamp} nowMs={nowMs} />
 
       <HeroSection stations={stations} selected={selected} onSelect={setSelected}
         model={heroModel} sensitivity={sensitivity} onSensitivityChange={changeSensitivity}
@@ -343,7 +344,7 @@ export default function App() {
             </div>
           </FullscreenCard>
 
-          <FullscreenCard title="24h Forecast" icon={<ForecastIcon />} meta="AI prediction">
+          <FullscreenCard title="24h Trend Extrapolation" icon={<ForecastIcon />} meta="statistical, not a physics model">
             <ForecastPanel forecast={forecast} status={forecastStatus} voiceEnabled={voiceEnabled} />
           </FullscreenCard>
 

@@ -122,6 +122,16 @@ body {
   padding: 4px 10px; border-radius: 20px;
   background: rgba(34,197,94,0.10); border: 1px solid rgba(34,197,94,0.22);
 }
+/* Not live: neutral, not alarming -- it's a data-freshness state, not an
+   air-quality one. Text stays --text-sub for contrast on the dark header. */
+.offline-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; color: var(--text-sub);
+  padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+  background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.25);
+}
+.offline-dot { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--text-sub); }
+.offline-age { font-weight: 500; font-family: var(--font-mono); font-size: 10px; }
 .live-dot {
   width: 7px; height: 7px; border-radius: 50%; background: var(--good);
   animation: pulse 1.8s ease-in-out infinite;
@@ -401,8 +411,11 @@ body {
 .station-table-wrap {
   padding: 20px 28px;
   max-width: 1400px; margin: 0 auto; width: 100%;
-  overflow-x: auto; /* a wide table scrolls inside itself, never the page */
 }
+/* A wide table scrolls inside itself, never the page. Focusable (see
+   StationTable.jsx), so it needs a visible focus ring. */
+.station-table-scroll { overflow-x: auto; border-radius: 8px; }
+.station-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .station-table {
   width: 100%; border-collapse: separate; border-spacing: 0;
   background: var(--bg-card); border-radius: var(--r-card);
@@ -754,7 +767,9 @@ body {
 @media (max-width: 480px) {
   .header { padding: 0 16px; gap: 8px; }
   /* The clock and subtitle are the first things to give up on a phone. */
-  .header-time, .header-sub, .ready-badge { display: none; }
+  /* Fullscreen too: iOS Safari has no page fullscreen, and the OFFLINE
+     badge (with its age) needs the room at 360 px. */
+  .header-time, .header-sub, .ready-badge, .icon-btn-label, .fullscreen-btn { display: none; }
   .header-right { gap: 6px; }
   .hero-heading { font-size: 2rem; }
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }

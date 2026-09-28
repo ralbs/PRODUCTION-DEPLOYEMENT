@@ -32,6 +32,11 @@ export default function StationTable({ stations, stationsAQI, selected, onSelect
         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>Latest reading · all stations</span>
       </div>
 
+      {/* The table scrolls sideways inside this box on narrow screens, so it
+          must be keyboard-reachable (tabIndex) and named (WCAG 2.1.1 /
+          axe scrollable-region-focusable). */}
+      <div className="station-table-scroll" tabIndex={0} role="region"
+        aria-label="Station AQI table, scrolls horizontally">
       <table className="station-table">
         <thead>
           <tr>
@@ -96,6 +101,7 @@ export default function StationTable({ stations, stationsAQI, selected, onSelect
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
