@@ -344,7 +344,7 @@ export default function App() {
             </div>
           </FullscreenCard>
 
-          <FullscreenCard title="24h Trend Extrapolation" icon={<ForecastIcon />} meta="statistical, not a physics model">
+          <FullscreenCard title="Trend Extrapolation" icon={<ForecastIcon />} meta="statistical, not a physics model">
             <ForecastPanel forecast={forecast} status={forecastStatus} voiceEnabled={voiceEnabled} />
           </FullscreenCard>
 

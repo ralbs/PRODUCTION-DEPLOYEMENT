@@ -250,8 +250,10 @@ describe("buildForecast history_aqi -- real-world irregularities", () => {
     const result = await buildForecast("TEST-STATION");
 
     expect(result.history_aqi.map((h) => h.aqi)).toEqual([50, 52, 54, 56, 58, 60]);
-    const skipped = holtWinters([50, 52, 54, 56, 58, 60]).forecast;
-    const zeroed = holtWinters([50, 52, 0, 54, 56, 58, 60]).forecast;
+    // Horizon capped at the 6 real hours.
+    expect(result.horizon_hours).toBe(6);
+    const skipped = holtWinters([50, 52, 54, 56, 58, 60], 0.3, 0.1, 6).forecast;
+    const zeroed = holtWinters([50, 52, 0, 54, 56, 58, 60], 0.3, 0.1, 6).forecast;
     expect(skipped).not.toEqual(zeroed); // guard: the two outcomes are distinguishable
     expect(result.predictions.map((p) => p.aqi)).toEqual(skipped);
   });
@@ -270,7 +272,8 @@ describe("buildForecast history_aqi -- real-world irregularities", () => {
     expect(result.fit_hours).toBe(7);
     expect(result.real_hours).toBe(6);
     expect(result.interpolated_hours).toBe(1);
-    expect(result.predictions.map((p) => p.aqi)).toEqual(holtWinters([50, 52, 54, 56, 58, 60, 62]).forecast);
+    expect(result.horizon_hours).toBe(6); // capped at REAL hours -- the interpolated one doesn't count
+    expect(result.predictions.map((p) => p.aqi)).toEqual(holtWinters([50, 52, 54, 56, 58, 60, 62], 0.3, 0.1, 6).forecast);
   });
 });
 
@@ -283,7 +286,9 @@ describe("buildForecast -- hourly resampling of 1-minute telemetry", () => {
   const perMinute = (minutes, aqiAt) =>
     Array.from({ length: minutes }, (_, i) => docWithAqi(aqiAt(i), new Date(t0 + i * MIN)));
 
-  test("~6h of 1-minute input -> 24 hourly predictions, exactly 1 h apart, after the last hour", async () => {
+  // Horizon is capped at the real hours fitted (MAX_HORIZON_H at most), so
+  // ~6h of data now gives 6 hourly steps, not 24.
+  test("~6h of 1-minute input -> hourly predictions exactly 1 h apart, horizon capped at 6 real hours", async () => {
     const docs = perMinute(6 * 60, (i) => 50 + Math.floor(i / 60) * 2); // 50,52,..,60 per hour
     mockFind([...docs].reverse());
 
@@ -291,13 +296,14 @@ describe("buildForecast -- hourly resampling of 1-minute telemetry", () => {
 
     expect(result.resolution_minutes).toBe(60);
     expect(result.fit_hours).toBe(6);
-    expect(result.predictions).toHaveLength(24);
+    expect(result.horizon_hours).toBe(6);
+    expect(result.predictions).toHaveLength(6);
     const ts = result.predictions.map((p) => Date.parse(p.timestamp));
     ts.slice(1).forEach((t, i) => expect(t - ts[i]).toBe(H));
     expect(ts[0]).toBe(t0 + 6 * H); // first step = the hour after the last (5:00) bucket
-    expect(ts[23] - ts[0]).toBe(23 * H); // 24 real hours, not 24 minutes
+    expect(ts[5] - ts[0]).toBe(5 * H); // real hours, not minutes
     // Fitted on the six hourly means, not 360 raw points.
-    expect(result.predictions.map((p) => p.aqi)).toEqual(holtWinters([50, 52, 54, 56, 58, 60]).forecast);
+    expect(result.predictions.map((p) => p.aqi)).toEqual(holtWinters([50, 52, 54, 56, 58, 60], 0.3, 0.1, 6).forecast);
     expect(result.trend).toBe("rapidly rising"); // +2 AQI/hour > trendLabel's 1.5/hour
     expect(result.history_aqi).toHaveLength(6);
   });
@@ -350,7 +356,7 @@ describe("forecast honesty -- MIN_REAL_HOURS, residual band, damping, local hour
     mockFind(hourly([50, 52, 54, 56, 58, 60]).reverse());
     const r = await buildForecast("TEST-STATION");
     expect(r.real_hours).toBe(6);
-    expect(r.predictions).toHaveLength(24);
+    expect(r.predictions).toHaveLength(6); // horizon capped at the 6 real hours
     expect(r.predictions.every((p) => p.aqi_low <= p.aqi && p.aqi <= p.aqi_high)).toBe(true);
     expect(typeof r.trend).toBe("string");
     expect(r.method.kind).toBe("extrapolation");
@@ -381,15 +387,47 @@ describe("forecast honesty -- MIN_REAL_HOURS, residual band, damping, local hour
     expect(Math.abs(hw.sigma - oldSigma)).toBeGreaterThan(0.5);
   });
 
-  test("buildForecast's band is exactly +/- round(sd[h])", async () => {
-    const vals = [50, 55, 48, 60, 52, 58, 51];
+  test("buildForecast's band is +/- max(BAND_MIN_AQI, round(sd[h])), clamped to [0, 500]", async () => {
+    // Noisy: sd exceeds the floor at later steps.
+    const vals = [50, 85, 40, 95, 45, 90, 42, 88];
     mockFind(hourly(vals).reverse());
     const r = await buildForecast("TEST-STATION");
-    const hw = holtWinters(vals);
+    const hw = holtWinters(vals, 0.3, 0.1, r.horizon_hours);
+    expect(hw.sd.some((s) => Math.round(s) > BAND_MIN_AQI)).toBe(true); // both branches exercised
     r.predictions.forEach((p, i) => {
-      expect(p.aqi_high - p.aqi).toBe(Math.round(hw.sd[i]));
-      expect(p.aqi - p.aqi_low).toBe(Math.min(p.aqi, Math.round(hw.sd[i])));
+      const ci = Math.max(BAND_MIN_AQI, Math.round(hw.sd[i]));
+      expect(p.aqi_high).toBe(Math.min(AQI_MAX, p.aqi + ci));
+      expect(p.aqi_low).toBe(Math.max(0, p.aqi - ci));
     });
+  });
+
+  test("band minimum: a perfectly smooth series still gets +/- BAND_MIN_AQI (the sensor's own consistency)", async () => {
+    mockFind(hourly([50, 52, 54, 56, 58, 60]).reverse());
+    const r = await buildForecast("TEST-STATION");
+    for (const p of r.predictions) {
+      expect(p.aqi_high - p.aqi).toBeGreaterThanOrEqual(BAND_MIN_AQI);
+      expect(p.aqi - p.aqi_low).toBeGreaterThanOrEqual(BAND_MIN_AQI);
+    }
+    expect(r.method.band_min_aqi).toBe(BAND_MIN_AQI);
+  });
+
+  test("horizon cap: real hours, then MAX_HORIZON_H; a bad request falls back to the cap", async () => {
+    const vals = (n) => Array.from({ length: n }, (_, i) => 50 + (i % 3));
+    for (const [n, req, want] of [[6, 24, 6], [10, 24, 10], [30, 48, MAX_HORIZON_H], [30, 3, 3], [30, NaN, MAX_HORIZON_H], [8, 0, 8]]) {
+      mockFind(hourly(vals(n)).reverse());
+      const r = await buildForecast("TEST-STATION", 168, req);
+      expect([n, req, r.horizon_hours, r.predictions.length]).toEqual([n, req, want, want]);
+    }
+  });
+
+  test("band and point stay inside [0, 500] at both ends of the scale", async () => {
+    for (const vals of [[470, 480, 490, 495, 500, 500], [30, 18, 10, 5, 2, 1]]) {
+      mockFind(hourly(vals.map((v) => v)).reverse());
+      const r = await buildForecast("TEST-STATION");
+      for (const p of r.predictions) {
+        expect(0 <= p.aqi_low && p.aqi_low <= p.aqi && p.aqi <= p.aqi_high && p.aqi_high <= AQI_MAX).toBe(true);
+      }
+    }
   });
 
   test("a steady real trend is estimated at its true slope (damping is not inside the fit)", () => {

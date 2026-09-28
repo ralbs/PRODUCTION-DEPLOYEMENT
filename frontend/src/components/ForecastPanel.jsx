@@ -64,7 +64,7 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
   if (!forecast) {
     return (
       <div className="forecast-section">
-        <div className="card-title">Trend extrapolation · 24h</div>
+        <div className="card-title">Trend extrapolation</div>
         <div style={{ color: "var(--text-sub)", fontSize: 12, padding: "20px 0", lineHeight: 1.6 }}>
           {EMPTY_MESSAGE[status] ?? EMPTY_MESSAGE.loading}
         </div>
@@ -81,7 +81,10 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
     <div className="forecast-section">
       <div className="forecast-header">
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <div className="card-title" style={{ marginBottom: 0 }}>Trend extrapolation · 24h</div>
+          {/* Horizon is the server's (capped at the real hours behind it). */}
+          <div className="card-title" style={{ marginBottom: 0 }}>
+            Trend extrapolation · next {forecast.horizon_hours ?? forecast.predictions?.length ?? "–"}h
+          </div>
           {/* Structural ESTIMATED treatment (root CLAUDE.md): this is the
               recent trend carried forward, not a model of the atmosphere. */}
           <ConfidenceBadge state="estimated" label="STATISTICAL EXTRAPOLATION"
@@ -120,7 +123,10 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
               so uneven gaps between readings show as uneven spacing. */}
           <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]}
             tickFormatter={fmtTime} tick={{ fontSize: 9, fill: "var(--text-dim)" }} />
-          <YAxis tick={{ fontSize: 9, fill: "var(--text-dim)" }} domain={[0, "auto"]} />
+          {/* Clamped to the AQI scale: never below 0 or above 500. */}
+          <YAxis tick={{ fontSize: 9, fill: "var(--text-dim)" }}
+            domain={[0, (max) => Math.min(500, Math.ceil(max / 50) * 50 || 50)]} allowDataOverflow />
+
           <Tooltip
             contentStyle={{ background: "#141e30", border: "1px solid rgba(79,142,247,0.3)", borderRadius: 8, fontSize: 11 }}
             labelStyle={{ color: "var(--text-sub)" }}
@@ -157,7 +163,9 @@ export default function ForecastPanel({ forecast, status = "loading", voiceEnabl
 
       <div style={{ marginTop: 6, fontSize: 10, color: "var(--text-sub)", lineHeight: 1.5 }}>
         Dashed line: the last {forecast.real_hours ?? "–"} hours' trend carried forward (Holt, trend damped
-        so it levels off). Shaded: ±1 SD of its own one-hour-ahead misses, widening with time.
+        so it levels off). Shaded: ±1 SD of its own one-hour-ahead misses, widening with time
+        {forecast.method?.band_min_aqi != null && <>, but never narrower than ±{forecast.method.band_min_aqi} AQI
+        (what the PM2.5 sensor itself can resolve)</>}; kept within 0–500.
         It cannot anticipate a new source or a weather change.
       </div>
 

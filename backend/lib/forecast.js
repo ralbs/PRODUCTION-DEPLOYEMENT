@@ -21,8 +21,18 @@ const HW_PHI = 0.9;
 // No line, no band, no trend label (and so no hero trend clause) from
 // fewer REAL hours than this -- interpolated hours don't count.
 const MIN_REAL_HOURS = 6;
-// The band can't be narrower than the index's own resolution (integer AQI).
+// sigma can't be below the index's own resolution (integer AQI).
 const SIGMA_FLOOR_AQI = 1;
+// The band's half-width can't be below what the SENSOR can resolve: the
+// PMS5003 datasheet gives a max consistency error of +/-10 ug/m3 over
+// 0-100 ug/m3, which is ~17 AQI in PM2.5's lower CPCB bands (50/30 and
+// 50/29 AQI per ug/m3). A band narrower than that claims more certainty
+// than the measurement has, however smooth the recent series looks.
+const BAND_MIN_AQI = 17;
+// Horizon: never further ahead than the real hours the fit is based on
+// (six hours of data -> at most six hours of extrapolation), and never
+// more than a day.
+const MAX_HORIZON_H = 24;
 
 // Holt linear smoothing (level + trend, no seasonality), fitted undamped;
 // the extrapolation's trend is damped by `phi` (see HW_PHI).
@@ -177,7 +187,9 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   const realHours = series.filter((b) => !b.interpolated).length;
   if (realHours < MIN_REAL_HOURS) return null;
 
-  const hw = holtWinters(series.map((b) => b.aqi), HW_ALPHA, HW_BETA, horizon, HW_PHI);
+  const requested = Number.isFinite(horizon) && horizon >= 1 ? Math.floor(horizon) : MAX_HORIZON_H;
+  const horizonHours = Math.min(requested, MAX_HORIZON_H, realHours);
+  const hw = holtWinters(series.map((b) => b.aqi), HW_ALPHA, HW_BETA, horizonHours, HW_PHI);
   if (!hw) return null;
 
   const lastDoc = orderedDocs[orderedDocs.length - 1];
@@ -185,13 +197,15 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   // Predictions are hourly buckets too, labelled by their start, like history.
   const lastTs = new Date(series[series.length - 1].start);
 
+  // Point and band clamped to the AQI scale [0, 500]; low <= point <= high.
+  const clampAqi = (x) => Math.min(AQI_MAX, Math.max(0, x));
   const predictions = hw.forecast.map((aqi, i) => {
-    const ci = Math.round(hw.sd[i]);
+    const ci = Math.max(BAND_MIN_AQI, Math.round(hw.sd[i]));
     return {
       timestamp: new Date(lastTs.getTime() + (i + 1) * HOUR_MS).toISOString(),
       aqi,
-      aqi_low: Math.max(0, aqi - ci),
-      aqi_high: Math.min(AQI_MAX, aqi + ci),
+      aqi_low: clampAqi(aqi - ci),
+      aqi_high: clampAqi(aqi + ci),
       category: aqiCategory(aqi),
     };
   });
@@ -247,11 +261,13 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
     real_hours: realHours,
     interpolated_hours: series.length - realHours,
     min_real_hours: MIN_REAL_HOURS,
+    horizon_hours: horizonHours,
     method: {
       kind: "extrapolation",
       model: "Holt linear fitted on hourly means; extrapolated trend damped by phi",
       alpha: HW_ALPHA, beta: HW_BETA, phi: HW_PHI,
-      band: "aqi_low/aqi_high = +/-1 SD; SD from in-sample one-step residuals, widened per step (Holt h-step variance)",
+      band: `aqi_low/aqi_high = +/-1 SD (SD from in-sample one-step residuals, widened per step by the Holt h-step variance), at least +/-${BAND_MIN_AQI} AQI (sensor consistency), clamped to 0-${AQI_MAX}`,
+      band_min_aqi: BAND_MIN_AQI,
       sigma: Math.round(hw.sigma * 10) / 10,
     },
     voice_text: voiceText,
@@ -394,7 +410,7 @@ async function checkSpike(stationId) {
 
 module.exports = {
   buildForecast, checkSpike, windowedSpike, perPollutantSpike, holtWinters, hourlyBuckets, contiguousHourlySeries,
-  MIN_REAL_HOURS, HW_PHI, AQI_MAX,
+  MIN_REAL_HOURS, HW_PHI, AQI_MAX, BAND_MIN_AQI, MAX_HORIZON_H,
   SPIKE_RECENT_MIN, SPIKE_ROLLING_MIN, SPIKE_BASELINE_MIN, SPIKE_MIN_BASELINE_POINTS, SPIKE_Z, SPIKE_MIN_JUMP_AQI,
   SPIKE_POLLUTANTS,
 };
