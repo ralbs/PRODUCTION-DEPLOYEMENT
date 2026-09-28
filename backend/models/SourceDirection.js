@@ -21,6 +21,7 @@ const sourceDirectionSchema = new mongoose.Schema(
     // document instead of inserting a duplicate.
     idempotency_key: { type: String, required: true, unique: true },
 
+    // SEMANTICS CHANGE, not reconciled: records ingested before the backend deploy of 6cf7113 hold the original one-step Holt-Winters AQI rule's values; records after hold the per-pollutant rule's (triggering pollutant's CPCB sub-index; sigma in its concentration units) -- lib/forecast.js checkSpike().
     trigger: {
       actual_aqi: { type: Number, required: true },
       predicted_aqi: { type: Number, required: true },
