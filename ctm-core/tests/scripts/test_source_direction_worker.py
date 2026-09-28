@@ -252,6 +252,7 @@ STATION = {"station_id": "NEL-001", "device_id": "ESP32-001", "location": {"lat"
 SPIKE = {
     "station_id": "NEL-001", "is_spike": True, "actual_aqi": 180, "predicted_aqi": 90,
     "predicted_low": 70, "predicted_high": 110, "sigma": 20, "timestamp": "2025-08-15T12:00:00.000Z",
+    "z": 4.5, "jump_aqi": 90,
 }
 
 
@@ -319,11 +320,12 @@ RAN_AT = datetime(2026, 9, 27, 12, 0, 3, tzinfo=timezone.utc)
 
 def test_run_record_no_spike():
     with rm_module.Mocker() as m:
-        result = _run(m, spike={**SPIKE, "is_spike": False}, as_of=datetime.now(timezone.utc), use_live_wind=True)
+        result = _run(m, spike={**SPIKE, "is_spike": False, "z": 2.8, "jump_aqi": 19.5}, as_of=datetime.now(timezone.utc), use_live_wind=True)
     rec = build_run_record(result, RAN_AT)
     assert rec == {
         "station_id": "NEL-001", "outcome": "skipped", "reason": "no spike",
         "wind_failure_reason": None, "spike_detected": False, "spike_timestamp": None,
+        "spike_z": 2.8, "spike_jump_aqi": 19.5,  # a near-miss is still recorded
         "ran_at": "2026-09-27T12:00:03+00:00",
     }
 
@@ -336,6 +338,7 @@ def test_run_record_spike_but_wind_rate_limited():
     assert rec["outcome"] == "skipped"
     assert rec["spike_detected"] is True
     assert rec["spike_timestamp"] == SPIKE["timestamp"]
+    assert (rec["spike_z"], rec["spike_jump_aqi"]) == (4.5, 90)
     assert rec["wind_failure_reason"] == "provider_http_429"
     assert rec["reason"].startswith("no real wind data: provider_http_429")
 
@@ -355,6 +358,7 @@ def test_run_record_not_enough_data_leaves_spike_unknown():
     rec = build_run_record(result, RAN_AT)
     assert rec["outcome"] == "skipped"
     assert rec["spike_detected"] is None  # the check couldn't run -- not "no spike"
+    assert rec["spike_z"] is None and rec["spike_jump_aqi"] is None
     assert rec["reason"] == "not enough data for a spike check"
 
 

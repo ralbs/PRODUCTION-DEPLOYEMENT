@@ -307,6 +307,8 @@ def build_run_record(result: dict, ran_at: datetime) -> dict:
         reason = result.get("reason") or f"{action}: HTTP {result.get('status_code')}"
     spike = result.get("spike")
     spike_detected = bool(spike["is_spike"]) if spike else None
+    # z and jump are recorded whenever the check ran -- a near-miss (z 2.8)
+    # is worth seeing, not just a trigger. None when it couldn't run.
     return {
         "station_id": result["station_id"],
         "outcome": outcome,
@@ -314,6 +316,8 @@ def build_run_record(result: dict, ran_at: datetime) -> dict:
         "wind_failure_reason": result.get("wind_failure_reason"),
         "spike_detected": spike_detected,
         "spike_timestamp": spike["timestamp"] if spike_detected else None,
+        "spike_z": spike.get("z") if spike else None,
+        "spike_jump_aqi": spike.get("jump_aqi") if spike else None,
         "ran_at": ran_at.isoformat(),
     }
 

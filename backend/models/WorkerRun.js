@@ -24,6 +24,10 @@ const workerRunSchema = new mongoose.Schema(
     // like "no spike". null when the check itself couldn't run.
     spike_detected: { type: Boolean, default: null },
     spike_timestamp: { type: Date, default: null }, // the triggering reading, when a spike fired
+    // The windowed spike rule's own numbers (lib/forecast.js checkSpike),
+    // recorded whenever the check ran -- so a near-miss is visible too.
+    spike_z: { type: Number, default: null },
+    spike_jump_aqi: { type: Number, default: null },
     ran_at: { type: Date, required: true },
   },
   { timestamps: true },

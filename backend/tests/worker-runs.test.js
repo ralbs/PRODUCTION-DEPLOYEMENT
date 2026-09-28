@@ -22,6 +22,7 @@ const RATE_LIMITED = {
   reason: "no real wind data: provider_http_429 -- 1h window ending 2026-09-27T12:00:00+00:00 (live feed)",
   wind_failure_reason: "provider_http_429", spike_detected: true,
   spike_timestamp: "2026-09-27T11:45:00.000Z", ran_at: "2026-09-27T12:00:03.000Z",
+  spike_z: 4.52, spike_jump_aqi: 31.4,
 };
 
 afterEach(() => jest.clearAllMocks());
@@ -43,6 +44,7 @@ describe("POST /api/source-direction/runs", () => {
     expect(update.$set).toMatchObject({
       device_id: "WORKER-SOURCE-DIRECTION", outcome: "skipped",
       wind_failure_reason: "provider_http_429", spike_detected: true,
+      spike_z: 4.52, spike_jump_aqi: 31.4,
     });
     expect(update.$set.ran_at).toEqual(new Date("2026-09-27T12:00:03.000Z"));
     expect(opts).toMatchObject({ upsert: true });
@@ -62,6 +64,8 @@ describe("POST /api/source-direction/runs", () => {
     ["bad ran_at", { ran_at: "not-a-date" }],
     ["oversized reason", { reason: "x".repeat(501) }],
     ["non-boolean spike flag", { spike_detected: "yes" }],
+    ["non-numeric z", { spike_z: "4.5" }],
+    ["string jump", { spike_jump_aqi: "NaN" }], // a real NaN can't travel in JSON (-> null)
   ])("400 on %s", async (_l, patch) => {
     const res = await request(app).post("/api/source-direction/runs").set(AUTH).send({ ...RATE_LIMITED, ...patch });
     expect(res.status).toBe(400);

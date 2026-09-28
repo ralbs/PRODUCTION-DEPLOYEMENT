@@ -124,6 +124,9 @@ function validateRun(body) {
   }
   if (body.spike_detected != null && typeof body.spike_detected !== "boolean") return "spike_detected must be boolean or null";
   if (body.spike_timestamp != null && isNaN(new Date(body.spike_timestamp).getTime())) return "spike_timestamp is not a valid ISO date string";
+  for (const f of ["spike_z", "spike_jump_aqi"]) {
+    if (body[f] != null && !(typeof body[f] === "number" && Number.isFinite(body[f]))) return `${f} must be a finite number or null`;
+  }
   return null;
 }
 
@@ -148,6 +151,8 @@ router.post("/runs", authenticateDevice, async (req, res) => {
           wind_failure_reason: body.wind_failure_reason ?? null,
           spike_detected: body.spike_detected ?? null,
           spike_timestamp: body.spike_timestamp ? new Date(body.spike_timestamp) : null,
+          spike_z: body.spike_z ?? null,
+          spike_jump_aqi: body.spike_jump_aqi ?? null,
           ran_at: new Date(body.ran_at),
         },
       },
