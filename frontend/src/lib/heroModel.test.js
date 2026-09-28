@@ -28,7 +28,7 @@ test("current reading -> present-tense headline + CPCB impact", () => {
 
 test("stale reading -> never present tense, no guidance, no trend (NEL-001's real 19-day-old reading)", () => {
   const m = buildHeroModel({ stationId: "NEL-001", latest: reading(33, 19 * 24 * H),
-    forecast: { trend: "falling", history_aqi: hourly([40, 38, 36, 35, 34, 33]) }, nowMs: NOW });
+    forecast: { trend: "falling", resolution_minutes: 60, history_aqi: hourly([40, 38, 36, 35, 34, 33]) }, nowMs: NOW });
   assert.equal(m.mode, "stale");
   assert.equal(m.headline, "No current reading from NEL-001.");
   assert.match(m.secondary, /^Latest reading: Good, .* \(19 days ago\)\.$/);
@@ -44,28 +44,42 @@ test("staleness boundary is 10 minutes", () => {
 test("trend clause is suppressed for minute-spaced data (the forecast treats each reading as an hour)", () => {
   const perMinute = [40, 39, 38, 37, 36, 35].map((a, i) => ({ timestamp: new Date(NOW - (5 - i) * MIN).toISOString(), aqi: a }));
   assert.deepEqual(trendClause({ trend: "falling", history_aqi: perMinute }, NOW), { text: null, why: "not_hourly" });
+  // Even if a server claimed hourly resolution, minute-spaced history still blocks it.
+  assert.deepEqual(trendClause({ trend: "falling", resolution_minutes: 60, history_aqi: perMinute }, NOW), { text: null, why: "not_hourly" });
+});
+
+test("P0-a gate: no clause unless the server declares 60-minute steps, even for hourly-looking history", () => {
+  const f = { trend: "falling", history_aqi: hourly([60, 58, 57, 55, 54, 53]), predictions: [] };
+  for (const resolution of [undefined, null, 1, 30, "60"]) {
+    assert.deepEqual(trendClause({ ...f, resolution_minutes: resolution }, NOW - MIN), { text: null, why: "not_hourly" }, String(resolution));
+  }
+  assert.equal(trendClause({ ...f, resolution_minutes: 60 }, NOW - MIN).text, "Improving over the next 2 hours.");
+  // ...and through the full model: current reading, old-shape forecast -> hero renders no trend text.
+  const m = buildHeroModel({ stationId: "S", latest: reading(53), forecast: f, nowMs: NOW });
+  assert.equal(m.mode, "current");
+  assert.equal(m.trend.text, null);
 });
 
 test("hourly data -> wording follows the backend trend label", () => {
-  const f = (trend, aqis) => trendClause({ trend, history_aqi: hourly(aqis), predictions: [] }, NOW - MIN).text;
+  const f = (trend, aqis) => trendClause({ trend, resolution_minutes: 60, history_aqi: hourly(aqis), predictions: [] }, NOW - MIN).text;
   assert.equal(f("falling", [60, 58, 57, 55, 54, 53]), "Improving over the next 2 hours.");
   assert.equal(f("stable", [60, 60, 61, 60, 60, 61]), "Steady over the next 2 hours.");
   assert.equal(f("rapidly rising", [40, 44, 49, 55, 60, 66]), "Worsening quickly over the next 2 hours.");
 });
 
 test("trend contradicted by the last three real hours -> 'Direction unclear'", () => {
-  const t = trendClause({ trend: "rising", history_aqi: hourly([50, 60, 70, 65, 60, 55]), predictions: [] }, NOW - MIN);
+  const t = trendClause({ trend: "rising", resolution_minutes: 60, history_aqi: hourly([50, 60, 70, 65, 60, 55]), predictions: [] }, NOW - MIN);
   assert.equal(t.text, "Direction unclear right now");
 });
 
 test("category change within 2 h: 'likely' only when the whole interval crosses, else 'may reach'", () => {
   const hist = hourly([80, 84, 88, 92, 95, 98]);
   const pred = (aqi, lo, hi, h) => ({ timestamp: new Date(NOW - MIN + h * H).toISOString(), aqi, aqi_low: lo, aqi_high: hi });
-  const likely = trendClause({ trend: "rising", history_aqi: hist, predictions: [pred(104, 101, 108, 1)] }, NOW - MIN).text;
+  const likely = trendClause({ trend: "rising", resolution_minutes: 60, history_aqi: hist, predictions: [pred(104, 101, 108, 1)] }, NOW - MIN).text;
   assert.match(likely, /^Worsening over the next 2 hours — likely Moderately polluted by /);
-  const may = trendClause({ trend: "rising", history_aqi: hist, predictions: [pred(104, 90, 118, 1)] }, NOW - MIN).text;
+  const may = trendClause({ trend: "rising", resolution_minutes: 60, history_aqi: hist, predictions: [pred(104, 90, 118, 1)] }, NOW - MIN).text;
   assert.match(may, / — may reach Moderately polluted by /);
-  const beyond = trendClause({ trend: "rising", history_aqi: hist, predictions: [pred(130, 120, 140, 3)] }, NOW - MIN).text;
+  const beyond = trendClause({ trend: "rising", resolution_minutes: 60, history_aqi: hist, predictions: [pred(130, 120, 140, 3)] }, NOW - MIN).text;
   assert.equal(beyond, "Worsening over the next 2 hours.");
 });
 

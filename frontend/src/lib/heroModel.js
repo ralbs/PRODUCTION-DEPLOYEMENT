@@ -61,12 +61,15 @@ const TREND_TEXT = {
 const TREND_SIGN = { "falling": -1, "rapidly falling": -1, "stable": 0, "rising": 1, "rapidly rising": 1 };
 
 // The trend clause, or why there isn't one. Gated per HERO_SPEC.md s.2.
-// Key gate: the Holt-Winters fit treats each reading as ONE HOUR (backend
-// forecast.js). Until readings are genuinely hourly (P0-a: resample to
-// hourly means), a "next 2 hours" claim would be wrong -- so the clause
-// only appears when the history really is hourly-spaced.
+// Key gate (P0-a): the clause says "next 2 hours", so it needs forecast
+// steps that really are hours. Two independent checks, both required:
+//  1. the server declares resolution_minutes === 60 -- backends before the
+//     hourly resampling fix treated each 1-minute reading as an hour and
+//     don't send this field, so they can never get a clause;
+//  2. the history it returned is actually ~hourly-spaced.
 export function trendClause(forecast, readingAtMs) {
   if (!forecast) return { text: null, why: "no_forecast" };
+  if (forecast.resolution_minutes !== 60) return { text: null, why: "not_hourly" };
   const hist = (forecast.history_aqi || [])
     .map((h) => ({ t: Date.parse(h.timestamp), aqi: h.aqi }))
     .filter((h) => Number.isFinite(h.t) && h.aqi != null);

@@ -1,4 +1,4 @@
-const { calculateAQI, aqiCategory } = require("./aqi");
+const { calculateAQI, aqiCategory, sanitizePollutants } = require("./aqi");
 const Telemetry = require("../models/Telemetry");
 
 // Holt-Winters double exponential smoothing (level + trend, no seasonality)
@@ -34,32 +34,105 @@ function trendLabel(b) {
   return "stable";
 }
 
-async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
-  const docs = await Telemetry.find({ "meta.station_id": stationId })
+const HOUR_MS = 3600 * 1000;
+// Devices post every 60 s (firmware/config.h TELEMETRY_INTERVAL_MS). Used
+// only to size the DB read for a lookback window; the window itself is
+// enforced by timestamp below, so a faster device can't stretch it.
+const READINGS_PER_HOUR = 60;
+// Consecutive hourly buckets further apart than this are not bridged:
+// the fit uses only the contiguous run ending at the newest hour. Up to
+// this, missing hours are linearly interpolated (a dropped hour or two of
+// Wi-Fi shouldn't throw away a week of history).
+const MAX_BRIDGED_GAP_H = 3;
+
+// Readings -> fixed UTC-hour buckets. Each pollutant is averaged over the
+// hour (after the same sanitising calculateAQI applies, so one garbage
+// value can't poison an hour), THEN the AQI is computed on those means --
+// CPCB defines the index on averaged concentrations, not averaged indices.
+// Returns non-empty buckets oldest-first; `aqi` is null for an hour whose
+// readings carried no AQI-bearing pollutant.
+function hourlyBuckets(orderedDocs) {
+  const byHour = new Map();
+  for (const d of orderedDocs) {
+    const t = new Date(d.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    const start = Math.floor(t / HOUR_MS) * HOUR_MS;
+    let b = byHour.get(start);
+    if (!b) byHour.set(start, (b = { start, readings: 0, sums: {}, counts: {} }));
+    b.readings++;
+    for (const [k, v] of Object.entries(sanitizePollutants(d.pollutants || {}))) {
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      b.sums[k] = (b.sums[k] || 0) + v;
+      b.counts[k] = (b.counts[k] || 0) + 1;
+    }
+  }
+  return [...byHour.values()]
+    .sort((a, b) => a.start - b.start)
+    .map((b) => {
+      const means = {};
+      for (const k of Object.keys(b.sums)) means[k] = b.sums[k] / b.counts[k];
+      return { start: b.start, readings: b.readings, aqi: calculateAQI(means)?.aqi ?? null };
+    });
+}
+
+// The evenly-spaced hourly series Holt-Winters is fitted on: the
+// contiguous run of buckets ending at the newest one, short gaps
+// interpolated (flagged), stopping at the first gap > MAX_BRIDGED_GAP_H.
+function contiguousHourlySeries(buckets) {
+  const real = buckets.filter((b) => b.aqi != null);
+  if (!real.length) return [];
+  const out = [real[real.length - 1]];
+  for (let i = real.length - 2; i >= 0; i--) {
+    const cur = real[i], next = out[0];
+    const gapH = Math.round((next.start - cur.start) / HOUR_MS);
+    if (gapH > MAX_BRIDGED_GAP_H) break;
+    for (let h = gapH - 1; h >= 1; h--) {
+      out.unshift({ start: cur.start + h * HOUR_MS, aqi: cur.aqi + ((next.aqi - cur.aqi) * h) / gapH, interpolated: true });
+    }
+    out.unshift(cur);
+  }
+  return out;
+}
+
+// Reads the newest `lookbackHours` of a station's telemetry, by time.
+async function recentDocs(stationId, lookbackHours) {
+  const hours = Math.min(lookbackHours, 720);
+  const docs = await Telemetry.find({ "meta.station_id": stationId }, { timestamp: 1, pollutants: 1 })
     .sort({ timestamp: -1 })
-    .limit(Math.min(lookbackHours, 720))
+    .limit(hours * READINGS_PER_HOUR)
     .lean();
+  if (!docs.length) return [];
+  const newest = new Date(docs[0].timestamp).getTime();
+  return docs
+    .filter((d) => newest - new Date(d.timestamp).getTime() < hours * HOUR_MS)
+    .reverse();
+}
 
-  if (!docs.length) return null;
+// Forecast on HOURLY means. Before this, the series was raw readings and
+// every step was treated as an hour -- with 1-minute telemetry the "24h
+// forecast" was ~24 minutes of extrapolation stamped as 24 hours, and
+// trendLabel's per-hour thresholds were really per-minute. Now a step,
+// a prediction timestamp and `lookbackHours` all genuinely mean one hour.
+async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
+  const orderedDocs = await recentDocs(stationId, lookbackHours);
+  if (!orderedDocs.length) return null;
 
-  const orderedDocs = [...docs].reverse();
-  const aqiSeries = orderedDocs
-    .map((d) => calculateAQI(d.pollutants)?.aqi ?? null)
-    .filter((v) => v !== null);
+  const buckets = hourlyBuckets(orderedDocs);
+  const series = contiguousHourlySeries(buckets);
+  if (series.length < 3) return null;
 
-  if (aqiSeries.length < 3) return null;
-
-  const hw = holtWinters(aqiSeries);
+  const hw = holtWinters(series.map((b) => b.aqi), 0.3, 0.1, horizon);
   if (!hw) return null;
 
   const lastDoc = orderedDocs[orderedDocs.length - 1];
   const currentAQI = calculateAQI(lastDoc.pollutants);
-  const lastTs = new Date(lastDoc.timestamp);
+  // Predictions are hourly buckets too, labelled by their start, like history.
+  const lastTs = new Date(series[series.length - 1].start);
 
   const predictions = hw.forecast.map((aqi, i) => {
     const ci = Math.round(hw.sigma * Math.sqrt(i + 1));
     return {
-      timestamp: new Date(lastTs.getTime() + (i + 1) * 3600 * 1000).toISOString(),
+      timestamp: new Date(lastTs.getTime() + (i + 1) * HOUR_MS).toISOString(),
       aqi,
       aqi_low: Math.max(0, aqi - ci),
       aqi_high: aqi + ci,
@@ -70,7 +143,7 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   const trend = trendLabel(hw.trend);
   const peak = Math.max(...hw.forecast);
   const peakIdx = hw.forecast.indexOf(peak);
-  const peakTs = new Date(lastTs.getTime() + (peakIdx + 1) * 3600 * 1000);
+  const peakTs = new Date(lastTs.getTime() + (peakIdx + 1) * HOUR_MS);
   const peakTime = peakTs.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 
   const station = stationId.replace("KSPCB-", "");
@@ -96,13 +169,12 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
   else
     voiceText += "Air quality should remain acceptable throughout the forecast period.";
 
-  // History sample for the combined chart (last 24 readings). Uses each
-  // doc's own timestamp -- the old `orderedDocs[length - 24 + i]` index went
-  // negative with fewer than 24 readings, producing an Invalid Date whose
-  // toISOString() threw, 500-ing the whole route for young stations.
-  const historyAqi = orderedDocs.slice(-24).map((d) => ({
-    timestamp: new Date(d.timestamp).toISOString(),
-    aqi: calculateAQI(d.pollutants)?.aqi ?? null,
+  // History for the chart: the last 24 real hourly buckets, each at its own
+  // hour (gaps stay gaps -- interpolated fit points are never shown as
+  // data; an hour with no AQI-bearing reading is kept as aqi:null).
+  const historyAqi = buckets.slice(-24).map((b) => ({
+    timestamp: new Date(b.start).toISOString(),
+    aqi: b.aqi,
   }));
 
   return {
@@ -113,6 +185,11 @@ async function buildForecast(stationId, lookbackHours = 168, horizon = 24) {
     peak_time: peakTime,
     predictions,
     history_aqi: historyAqi,
+    // Explicit, so a client can refuse to label steps as hours unless the
+    // server says they are (the hero's trend clause does exactly that).
+    resolution_minutes: 60,
+    fit_hours: series.length,
+    interpolated_hours: series.filter((b) => b.interpolated).length,
     voice_text: voiceText,
     generated_at: new Date().toISOString(),
   };
@@ -171,4 +248,4 @@ async function checkSpike(stationId, lookbackHours = 168) {
   };
 }
 
-module.exports = { buildForecast, checkSpike, holtWinters };
+module.exports = { buildForecast, checkSpike, holtWinters, hourlyBuckets, contiguousHourlySeries };
