@@ -446,6 +446,16 @@ body {
 
 /* ──────────────────────────────── SUB-INDEX PROGRESS BARS ── */
 .si-bar-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* Air Quality card: gauge beside the pollutant list. A class, not an inline
+   style, so the phone rule below can override it -- inline "200px 1fr" left
+   the list ~70px at 360 px and the card's overflow:hidden cut it off. */
+.aq-card-grid { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: start; }
+.aq-card-grid > * { min-width: 0; }
+@media (max-width: 600px) {
+  .aq-card-grid { grid-template-columns: 1fr; gap: 16px; }
+  .aq-card-grid > :first-child { justify-self: center; }
+}
 .si-bar-row { display: flex; flex-direction: column; gap: 5px; }
 .si-bar-header {
   display: flex; align-items: center; justify-content: space-between;

@@ -1,5 +1,5 @@
 // Static checks on the real CSS/markup (no DOM needed): the voice control
-// survives on phones.
+// survives on phones, and the Air Quality card stacks below 600 px.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -32,4 +32,11 @@ test("voice toggle lives in the hero, with an accessible name and toggle state",
   for (const sel of [".hero2-voice", ".hero2-controls", "button"]) {
     assert.ok(!hiddenOnNarrow().includes(sel), `${sel} must not be hidden on phones`);
   }
+});
+
+test("Air Quality card grid is a class (overridable) and stacks below 600px", () => {
+  assert.ok(!/gridTemplateColumns:\s*"200px 1fr"/.test(app), "inline 200px 1fr can't be overridden by a media query");
+  assert.match(app, /className="aq-card-grid"/);
+  const narrow = css.match(/@media\s*\(max-width:\s*600px\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(narrow, /\.aq-card-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
 });

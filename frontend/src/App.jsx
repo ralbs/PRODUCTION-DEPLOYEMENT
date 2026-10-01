@@ -339,7 +339,7 @@ export default function App() {
 
         <div className="right-col">
           <FullscreenCard title={`${stationName} Air Quality`} icon={<GaugeIcon />} meta={currentCat}>
-            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, alignItems: "start" }}>
+            <div className="aq-card-grid">
               <AQIGauge aqi={latest?.aqi} />
               <div>
                 <SubIndexPanel pollutants={latest?.pollutants} subIndices={latest?.aqi?.sub_indices} />
