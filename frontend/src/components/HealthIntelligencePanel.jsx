@@ -93,10 +93,9 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
     <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
 
       {/* Hero risk banner */}
-      <div style={{
+      <div className="health-hero-banner" style={{
         background: `linear-gradient(135deg, ${risk.color}10 0%, transparent 60%)`,
         border: `1px solid ${risk.color}28`, borderRadius: 14, padding: "18px 22px",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20,
       }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -107,14 +106,14 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
           </div>
           <p style={{ fontSize: 12, color: "var(--text-sub)", margin: 0, maxWidth: 480, lineHeight: 1.5 }}>{riskAdvice}</p>
         </div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center", flexShrink: 0 }}>
+        <div className="health-hero-rings">
           <Ring value={indices.iri} color={risk.color} size={68} stroke={6} label="IRI" />
           <Ring value={indices.aqhi} color="#4f8ef7" size={60} stroke={5} label="AQHI" />
         </div>
       </div>
 
       {/* 6 key metric cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+      <div className="health-metric-grid">
         <Card label="Predicted CRP" value={indices.crp.crp} unit="mg/L" sub={indices.crp.interpretation}
           color={indices.crp.color} tip="Estimated blood inflammation marker from air pollution" />
         <Card label="Cardiovascular" value={indices.csi} unit="/100" sub={cvRisk.label}
@@ -134,7 +133,7 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
       </div>
 
       {/* CRP breakdown + pollutant contributions */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div className="health-detail-grid">
         {/* CRP detail */}
         <div style={{ background: "var(--bg-card2)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 10 }}>
@@ -220,7 +219,7 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
             <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 8 }}>
               Total pollutant dose over the past 24 hours
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div className="health-exposure-grid">
               <div style={{ padding: "10px 12px", borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", color: "var(--text-dim)" }}>Daily Dose</div>
                 <div style={{ fontSize: 18, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text)" }}>
@@ -262,7 +261,7 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
       {/* Pollutant raw values */}
       <div style={{ background: "var(--bg-card2)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 18px" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>Current Readings</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+        <div className="health-pollutant-grid">
           {[
             { label: "PM1",   value: p.pm1 != null ? +(+p.pm1).toFixed(1) : null, unit: "µg/m³", who: null, color: "#94a3b8" },
             { label: "PM2.5", value: p.pm2_5, unit: "µg/m³", who: 5, color: "#ef4444" },

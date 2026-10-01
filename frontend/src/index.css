@@ -564,58 +564,22 @@ body {
 .section-pad { padding: 0 28px; max-width: 1400px; margin: 0 auto; width: 100%; }
 
 /* ──────────────────────────────── HEALTH INTELLIGENCE ── */
-.health-metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-.health-detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-.health-pollutant-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 10px;
-}
-.health-hero-banner {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 24px;
-  align-items: center;
-}
-.health-exposure-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.health-contrib-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.health-ref-bar {
-  display: flex;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.health-ref-labels {
-  display: flex;
-  margin-top: 4px;
-}
-
-@media (max-width: 1100px) {
-  .health-metric-grid { grid-template-columns: repeat(2, 1fr); }
-  .health-detail-grid { grid-template-columns: 1fr; }
-  .health-pollutant-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 768px) {
-  .health-hero-banner { grid-template-columns: 1fr; }
-  .health-metric-grid { grid-template-columns: 1fr; }
-  .health-exposure-grid { grid-template-columns: 1fr; }
+/* Classes, not inline styles, so the phone rule below can override them --
+   the inline repeat(3)/1fr 1fr/repeat(6) grids pushed Respiratory, Clean Air
+   Window, Air Ventilation and half the readings off the card at 360-390 px,
+   where the card's overflow:hidden cut them off. lib/layout.test.js. */
+.health-hero-banner { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.health-hero-rings  { display: flex; gap: 16px; align-items: center; flex-shrink: 0; }
+.health-metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.health-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.health-exposure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.health-pollutant-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.health-metric-grid > *, .health-detail-grid > *, .health-exposure-grid > *,
+.health-pollutant-grid > * { min-width: 0; }
+@media (max-width: 600px) {
+  .health-hero-banner { flex-direction: column; align-items: flex-start; }
+  .health-metric-grid, .health-detail-grid, .health-exposure-grid { grid-template-columns: 1fr; }
+  /* Reading tiles are small (label, number, unit): two still fit at 360 px. */
   .health-pollutant-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -710,8 +674,6 @@ body {
   .content-grid { grid-template-columns: 1fr; }
   .charts-band  { grid-template-columns: 1fr; }
   .aqi-legend-bar { grid-template-columns: repeat(3, 1fr); }
-  .health-metric-grid { grid-template-columns: repeat(2, 1fr); }
-  .health-detail-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
@@ -722,9 +684,6 @@ body {
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }
   .station-table thead th:nth-child(4),
   .station-table td:nth-child(4) { display: none; }
-  .health-metric-grid { grid-template-columns: 1fr; }
-  .health-pollutant-grid { grid-template-columns: repeat(2, 1fr); }
-  .health-exposure-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {

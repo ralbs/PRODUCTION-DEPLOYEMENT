@@ -40,3 +40,18 @@ test("Air Quality card grid is a class (overridable) and stacks below 600px", ()
   const narrow = css.match(/@media\s*\(max-width:\s*600px\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(narrow, /\.aq-card-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
 });
+
+const health = fs.readFileSync(path.join(SRC, "components", "HealthIntelligencePanel.jsx"), "utf8");
+
+test("Health card grids are classes (overridable) and stack below 600px (readings: 2 columns)", () => {
+  assert.ok(!/gridTemplateColumns/.test(health), "no inline grid columns: a media query can't override them");
+  const classes = ["health-hero-banner", "health-metric-grid", "health-detail-grid", "health-exposure-grid", "health-pollutant-grid"];
+  for (const c of classes) assert.match(health, new RegExp(`className="${c}"`), `${c} must be used`);
+  const narrow = [...css.matchAll(/@media\s*\(max-width:\s*600px\)\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
+  for (const c of ["health-metric-grid", "health-detail-grid", "health-exposure-grid"]) {
+    assert.match(narrow, new RegExp(String.raw`\.${c}[^{]*\{[^}]*grid-template-columns:\s*1fr\s*;`), `${c} must collapse to one column`);
+  }
+  // Reading tiles: two columns on phones (verified clip-free at 360 and 390 px).
+  assert.match(narrow, /\.health-pollutant-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)\s*;/, "reading tiles must be two columns below 600px");
+  assert.match(narrow, /\.health-hero-banner\s*\{[^}]*flex-direction:\s*column/, "risk banner must stack");
+});
