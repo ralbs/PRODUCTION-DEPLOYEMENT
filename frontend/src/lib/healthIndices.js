@@ -4,8 +4,10 @@
 // is not connected on the PCB, so O3 data is always null/missing.
 // Health index math is kept as-is (O3 resolves to 0 when absent).
 // ─────────────────────────────────────────────────────────────────────────────
-// Peer-reviewed formulas, published coefficients, and engineering indices
-// for the AQMS Health Intelligence layer.
+// The AQMS Health Intelligence layer. Only AQHI is a published formula
+// (Stieb 2008). CRP/IRI/CSI/RSI/OSI/CAWI are this dashboard's own composites:
+// published coefficients, local combination and scaling. The UI says so
+// (HealthIntelligencePanel's provenance block) -- keep it that way.
 //
 // All pollutant concentrations must be in µg/m³ (PM2.5, PM10, NO2, O3, SO2)
 // or mg/m³ (CO) as indicated per formula.

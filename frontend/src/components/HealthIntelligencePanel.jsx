@@ -295,11 +295,27 @@ export default function HealthIntelligencePanel({ latest, forecast, wind }) {
         </div>
       </div>
 
-      {/* References */}
-      <div style={{ fontSize: 9, color: "var(--text-dim)", lineHeight: 1.8, padding: "0 4px" }}>
-        <strong style={{ color: "var(--text-sub)" }}>Sources:</strong>{" "}
-        AQHI (Stieb 2008) · CRP (Liu 2019, Zhang 2021) · CSI (Hoek 2013, Burnett 2018) ·
-        RSI (Guarnieri 2014, Atkinson 2014) · OSI (Kelly 2011) · WHO AQG 2021
+      {/* Provenance -- which numbers are a published formula and which are
+          this dashboard's own. The card meta says the same in short; keep
+          the two in step, and never call the composites "peer-reviewed". */}
+      <div data-testid="health-provenance" style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7, padding: "0 4px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <div>
+          <strong style={{ color: "var(--text-sub)" }}>Published formula:</strong>{" "}
+          AQHI (Stieb et al. 2008, Health Canada), computed here from this station's readings.
+          O₃ is not measured, so its term is zero.
+        </div>
+        <div>
+          <strong style={{ color: "var(--text-sub)" }}>This dashboard's own scores</strong>{" "}
+          (not CPCB, WHO or peer-reviewed indices): Predicted CRP, IRI, Cardiovascular,
+          Respiratory, Oxidative Stress, Clean Air Window. They apply coefficients from published
+          studies -- CRP: Liu 2019, Zhang 2021 · Cardiovascular: Hoek 2013, Burnett 2018 ·
+          Respiratory: Guarnieri 2014, Atkinson 2014 · Oxidative: Kelly 2011 vs WHO AQG 2021 --
+          but the combination and 0-100 scaling are this dashboard's.
+        </div>
+        <div>
+          <strong style={{ color: "var(--text-sub)" }}>Arithmetic:</strong>{" "}
+          Inhaled Dose = PM2.5 × breathing rate (1.2 m³/h) × 24 h.
+        </div>
       </div>
     </div>
   );

@@ -370,7 +370,7 @@ export default function App() {
       {/* Health Intelligence */}
       <div className="section-pad" style={{ marginBottom: 20 }}>
         <FullscreenCard title="Health Intelligence" icon={<HealthIcon />}
-          meta="Peer-reviewed indices" bodyStyle={{ padding: 0 }}>
+          meta="AQHI: published formula · rest: this dashboard's scores" bodyStyle={{ padding: 0 }}>
           <HealthIntelligencePanel latest={latest} forecast={forecast} wind={liveWind} />
         </FullscreenCard>
       </div>
