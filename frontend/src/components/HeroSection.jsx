@@ -39,6 +39,8 @@ export default function HeroSection({ stations, selected, onSelect, model, sensi
           <label className="hero2-station">
             <span className="hero2-station-label">Station</span>
             <select className="hero-select" value={selected || ""} onChange={(e) => onSelect(e.target.value)}>
+              {/* Without this, a null selection still DISPLAYS the first option. */}
+              {!selected && <option value="" disabled>{stations.length ? "No real station" : "—"}</option>}
               {stations.map((s) => (
                 <option key={s.station_id} value={s.station_id}>{s.station_id}</option>
               ))}

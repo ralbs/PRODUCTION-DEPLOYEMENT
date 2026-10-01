@@ -5,4 +5,6 @@
 export const DEPLOYMENT = {
   city: "Nellore",
   region: "Andhra Pradesh",
+  // The station the dashboard opens on (lib/stations.js pickDefaultStation).
+  defaultStation: "NEL-001",
 };

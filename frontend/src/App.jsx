@@ -22,6 +22,7 @@ import { useLiveWind } from "./lib/useLiveWind";
 import { plumeCardMeta } from "./lib/plumeCardMeta";
 import { SOURCE_DIRECTION_CADENCE_MIN } from "./lib/lastRun";
 import { buildHeroModel, fmtAge } from "./lib/heroModel";
+import { pickDefaultStation } from "./lib/stations";
 import { loadSensitivity, saveSensitivity } from "./lib/sensitivity";
 
 const REFRESH_MS  = 60_000;
@@ -72,6 +73,9 @@ function useNow(intervalMs = 30_000) {
 export default function App() {
   const [stations, setStations]         = useState([]);
   const [selected, setSelected]         = useState(null);
+  // "loading"|"ok"|"no_real_station" -- the last when only test stations
+  // have reported (lib/stations.js); the hero says so instead of picking one.
+  const [stationsStatus, setStationsStatus] = useState("loading");
   const [latest, setLatest]             = useState(null);
   const [history, setHistory]           = useState([]);
   const [forecast, setForecast]         = useState(null);
@@ -113,7 +117,12 @@ export default function App() {
 
   useEffect(() => {
     api.getStations()
-      .then((list) => { setStations(list); if (list.length) setSelected(list[0].station_id); })
+      .then((list) => {
+        setStations(list);
+        const def = pickDefaultStation(list);
+        setSelected(def);
+        setStationsStatus(def ? "ok" : "no_real_station");
+      })
       .catch((e) => setError(e.message));
   }, []);
 
@@ -273,7 +282,8 @@ export default function App() {
   const changeSensitivity = useCallback((pref) => setSensitivity(saveSensitivity(pref)), []);
   const heroModel = buildHeroModel({
     stationId: selected, latest,
-    latestStatus: latest ? "ok" : error ? "error" : "loading",
+    latestStatus: latest ? "ok" : error ? "error"
+      : !selected && stationsStatus === "no_real_station" ? "no_real_station" : "loading",
     forecast: forecastStatus === "ok" ? forecast : null,
     sourceDirection, lastRun, sensitivity, nowMs,
   });

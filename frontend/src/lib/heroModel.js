@@ -125,6 +125,11 @@ export function buildHeroModel({ stationId, latest, latestStatus, forecast, sour
   const readingAtMs = Date.parse(latest?.timestamp);
   const base = { stationId, direction: directionSentence(sourceDirection, lastRun, nowMs) };
 
+  if (!latest && latestStatus === "no_real_station") {
+    return { ...base, mode: "no_data", headline: "No real station reporting yet.",
+      secondary: "Only test stations have sent data. Pick one from the station list to see its test readings.",
+      trend: null };
+  }
   if (!latest) {
     return { ...base, mode: latestStatus === "error" ? "no_data" : "loading",
       headline: latestStatus === "error" ? `No readings from ${stationId ?? "this station"} yet.` : "Loading the latest reading…",

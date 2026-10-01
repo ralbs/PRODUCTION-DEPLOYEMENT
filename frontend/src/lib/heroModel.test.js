@@ -120,3 +120,9 @@ test("MIN_REAL_HOURS gate on the trend clause: below -> none, at/above -> shown"
   assert.equal(trendClause({ ...base, real_hours: 6, history_aqi: hourly(falling.slice(-6)) }, NOW - MIN).text, "Improving over the next 2 hours.");
   assert.equal(trendClause({ ...base, real_hours: 8, history_aqi: hourly(falling) }, NOW - MIN).text, "Improving over the next 2 hours.");
 });
+
+test("only test stations reported: honest no-real-station hero, not a loading spinner", () => {
+  const m = buildHeroModel({ stationId: null, latest: null, latestStatus: "no_real_station", nowMs: NOW });
+  assert.equal(m.mode, "no_data");
+  assert.equal(m.headline, "No real station reporting yet.");
+});
