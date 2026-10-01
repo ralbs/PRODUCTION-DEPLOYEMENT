@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { api } from "./api";
 import { aqiToRgb } from "./lib/aqiColor";
 
-import Header            from "./components/Header";
 import HeroSection       from "./components/HeroSection";
 import StationTable      from "./components/StationTable";
 import MapPanel          from "./components/MapPanel";
@@ -311,15 +310,12 @@ export default function App() {
       <KeyboardShortcuts stations={stations} selected={selected} onSelect={setSelected}
         onVoiceToggle={() => setVoiceEnabled((v) => !v)} onRefresh={refreshStation} />
       <AlertToast aqi={latest?.aqi} station={selected} />
-      <Header voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)}
-        lastReadingAt={latest?.timestamp} nowMs={nowMs} />
-
-      {/* One <main> landmark for everything below the header (axe
-          landmark-one-main / region). */}
+      {/* One <main> landmark for the page (axe landmark-one-main / region). */}
       <main>
       <HeroSection stations={stations} selected={selected} onSelect={setSelected}
         model={heroModel} sensitivity={sensitivity} onSensitivityChange={changeSensitivity}
-        onShowDetails={() => mainRef.current?.scrollIntoView({ behavior: "smooth" })} />
+        onShowDetails={() => mainRef.current?.scrollIntoView({ behavior: "smooth" })}
+        voiceEnabled={voiceEnabled} onVoiceToggle={() => setVoiceEnabled((v) => !v)} />
 
       {error && <div className="error-bar">{error}</div>}
 

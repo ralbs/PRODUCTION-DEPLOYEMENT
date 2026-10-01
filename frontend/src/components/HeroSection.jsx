@@ -14,7 +14,7 @@ import { PRESETS } from "../lib/sensitivity";
 // above it, the category colour is stronger (current mode only); below it,
 // the hero stays quiet. In stale mode colour stays neutral either way and
 // the emphasis is typographic -- a past reading must not tint as current.
-export default function HeroSection({ stations, selected, onSelect, model, sensitivity, onSensitivityChange, onShowDetails }) {
+export default function HeroSection({ stations, selected, onSelect, model, sensitivity, onSensitivityChange, onShowDetails, voiceEnabled, onVoiceToggle }) {
   const live = model.mode === "current";
   const above = model.personal?.above;
   const rgb = live && model.rgb ? model.rgb.join(",") : "148,163,184";
@@ -46,6 +46,19 @@ export default function HeroSection({ stations, selected, onSelect, model, sensi
               ))}
             </select>
           </label>
+          {/* Voice alerts -- moved here when the top bar was removed; the only
+              other way to toggle it is the V key, which phones don't have. */}
+          <button type="button" className={`hero2-voice${voiceEnabled ? " is-on" : ""}`} onClick={onVoiceToggle}
+            aria-label="Voice alerts" aria-pressed={!!voiceEnabled}
+            title={voiceEnabled ? "Voice alerts on -- click to turn off" : "Turn on voice alerts"}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              {voiceEnabled
+                ? <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                : <><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></>}
+            </svg>
+            <span>{voiceEnabled ? "Voice on" : "Voice"}</span>
+          </button>
           </div>
         </div>
 

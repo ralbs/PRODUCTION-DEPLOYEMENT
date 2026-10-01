@@ -88,58 +88,6 @@ body {
   .ambient-wind-field { animation: none; transition: none; }
 }
 
-/* ──────────────────────────────── HEADER ── */
-.header {
-  position: sticky; top: 0; z-index: 200;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; padding: 0 28px; height: 58px;
-  background: rgba(11,15,26,0.94);
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(18px);
-}
-
-.header-logo {
-  display: flex; align-items: center; gap: 10px;
-}
-.header-logo-icon {
-  width: 34px; height: 34px; border-radius: 9px;
-  background: linear-gradient(135deg, #00e5a0, #00b37a);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.header-title { font-size: 14px; font-weight: 700; color: var(--text); }
-.header-sub { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
-
-.header-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
-
-.header-time { font-size: 12px; color: var(--text-sub); font-family: var(--font-mono); }
-
-.ready-badge {
-  padding: 4px 14px; border-radius: 20px;
-  background: #00e5a0; color: #0b1a13;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-}
-
-.live-badge {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 600; color: var(--good);
-  padding: 4px 10px; border-radius: 20px;
-  background: rgba(34,197,94,0.10); border: 1px solid rgba(34,197,94,0.22);
-}
-/* Not live: neutral, not alarming -- it's a data-freshness state, not an
-   air-quality one. Text stays --text-sub for contrast on the dark header. */
-.offline-badge {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 600; color: var(--text-sub);
-  padding: 4px 10px; border-radius: 20px; white-space: nowrap;
-  background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.25);
-}
-.offline-dot { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--text-sub); }
-.offline-age { font-weight: 500; font-family: var(--font-mono); font-size: 10px; }
-.live-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--good);
-  animation: pulse 1.8s ease-in-out infinite;
-}
 @keyframes pulse {
   0%,100% { opacity:1; transform:scale(1); }
   50%      { opacity:0.4; transform:scale(0.65); }
@@ -251,6 +199,14 @@ body {
   text-transform: uppercase; color: var(--text-sub); white-space: nowrap;
 }
 .hero2-station .hero-select { width: auto; min-width: 140px; padding-right: 28px; }
+.hero2-voice {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text-sub); cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: border-color 0.15s, color 0.15s;
+}
+.hero2-voice:hover, .hero2-voice:focus-visible { border-color: var(--accent); color: var(--accent); }
+.hero2-voice.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .hero2-body {
   display: grid; grid-template-columns: 1fr auto; gap: 32px; align-items: start;
 }
@@ -665,15 +621,6 @@ body {
 }
 .station-select:hover, .station-select:focus { border-color: var(--accent); }
 
-.icon-btn {
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-  padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
-  background: var(--bg-card); color: var(--text-sub); cursor: pointer;
-  font-size: 12px; font-weight: 500; transition: all 0.15s;
-}
-.icon-btn:hover  { border-color: var(--accent); color: var(--accent); }
-.icon-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-
 /* ──────────────────────────────── ALERT TOAST ── */
 .alert-toast {
   position: fixed; bottom: 28px; right: 28px; z-index: 9998;
@@ -771,12 +718,6 @@ body {
 }
 
 @media (max-width: 480px) {
-  .header { padding: 0 16px; gap: 8px; }
-  /* The clock and subtitle are the first things to give up on a phone. */
-  /* Fullscreen too: iOS Safari has no page fullscreen, and the OFFLINE
-     badge (with its age) needs the room at 360 px. */
-  .header-time, .header-sub, .ready-badge, .icon-btn-label, .fullscreen-btn { display: none; }
-  .header-right { gap: 6px; }
   .hero-heading { font-size: 2rem; }
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }
 }
