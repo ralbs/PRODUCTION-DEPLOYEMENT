@@ -9,8 +9,17 @@
  * finiteness checks, so a straight port stays faithful.
  *
  * Carried over exactly from live_wind.py:
- *   - Source: Open-Meteo forecast API, no key. A real NWP model NOWCAST, not
- *     a ground-station reading -> source_tier "live_model_nowcast".
+ *   - Source: Open-Meteo forecast API. A real NWP model NOWCAST, not a
+ *     ground-station reading -> source_tier "live_model_nowcast".
+ *
+ * API key (optional, server-side only): with OPEN_METEO_API_KEY set, requests
+ * go to Open-Meteo's commercial endpoint (customer-api.open-meteo.com, key as
+ * the `apikey` query param -- the only way Open-Meteo accepts it); unset, the
+ * free endpoint, exactly as before. The free tier is rate-limited per IP, and
+ * Render's shared outbound IP hit it for real (provider_http_429). The key
+ * rides in the request URL, so that URL is never logged, thrown or returned:
+ * failures stay fixed reason codes, and callers see only which endpoint
+ * ("free"/"customer") served the reading -- never the key.
  *   - wind_direction_10m is the meteorological FROM-direction -- verified
  *     empirically in live_wind.py against Meteostat station 43245 (~18 deg
  *     consistent offset, not ~180). Returned UNCONVERTED as dir_from_deg.
@@ -21,6 +30,14 @@
  */
 
 const LIVE_WIND_BASE_URL = "https://api.open-meteo.com/v1/forecast";
+const LIVE_WIND_CUSTOMER_BASE_URL = "https://customer-api.open-meteo.com/v1/forecast";
+
+// Read per call (not at load) so setting the env var needs no code change,
+// and tests can pass their own env. Blank/whitespace counts as unset.
+function apiKey(env = process.env) {
+  const k = typeof env.OPEN_METEO_API_KEY === "string" ? env.OPEN_METEO_API_KEY.trim() : "";
+  return k || null;
+}
 const LIVE_WIND_STATION_ID = "open-meteo-live-nowcast";
 
 // Open-Meteo's current conditions update every 15 min; 10 min keeps any one
@@ -29,7 +46,8 @@ const LIVE_WIND_STATION_ID = "open-meteo-live-nowcast";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map();
 
-function buildUrl(lat, lon) {
+// Contains the key when one is set -- never log or return this URL.
+function buildUrl(lat, lon, key = apiKey()) {
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lon),
@@ -37,11 +55,12 @@ function buildUrl(lat, lon) {
     wind_speed_unit: "ms",
     timezone: "UTC",
   });
-  return `${LIVE_WIND_BASE_URL}?${params}`;
+  if (key) params.set("apikey", key);
+  return `${key ? LIVE_WIND_CUSTOMER_BASE_URL : LIVE_WIND_BASE_URL}?${params}`;
 }
 
 /**
- * @returns {Promise<null | {speed_m_s, dir_from_deg, as_of, grid_lat, grid_lon}>}
+ * @returns {Promise<null | {speed_m_s, dir_from_deg, as_of, grid_lat, grid_lon, endpoint}>}
  */
 async function fetchLiveWind(lat, lon, opts) {
   return (await fetchLiveWindDetailed(lat, lon, opts)).value;
@@ -54,10 +73,12 @@ async function fetchLiveWind(lat, lon, opts) {
  * of being an indistinguishable null.
  * @returns {Promise<{value: object|null, reason: string|null}>}
  */
-async function fetchLiveWindDetailed(lat, lon, { fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+async function fetchLiveWindDetailed(lat, lon, { fetchImpl = globalThis.fetch, timeoutMs = 10000, env = process.env } = {}) {
   const fail = (reason) => ({ value: null, reason });
-  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-  const hit = cache.get(key);
+  const key = apiKey(env);
+  const endpoint = key ? "customer" : "free";
+  const cacheKey = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { value: hit.value, reason: null };
 
   // Global fetch only exists on Node >= 18.
@@ -67,7 +88,7 @@ async function fetchLiveWindDetailed(lat, lon, { fetchImpl = globalThis.fetch, t
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(buildUrl(lat, lon), { signal: ctrl.signal });
+    const res = await fetchImpl(buildUrl(lat, lon, key), { signal: ctrl.signal });
     if (!res.ok) return fail(`provider_http_${res.status}`);
     try {
       payload = await res.json();
@@ -104,12 +125,13 @@ async function fetchLiveWindDetailed(lat, lon, { fetchImpl = globalThis.fetch, t
     as_of: asOf.toISOString(),
     grid_lat: Number.isFinite(payload.latitude) ? payload.latitude : null,
     grid_lon: Number.isFinite(payload.longitude) ? payload.longitude : null,
+    endpoint,
   };
-  cache.set(key, { at: Date.now(), value }); // successes only; failures are retried
+  cache.set(cacheKey, { at: Date.now(), value }); // successes only; failures are retried
   return { value, reason: null };
 }
 
 module.exports = {
-  fetchLiveWind, fetchLiveWindDetailed, buildUrl,
-  LIVE_WIND_BASE_URL, LIVE_WIND_STATION_ID, _cache: cache,
+  fetchLiveWind, fetchLiveWindDetailed, buildUrl, apiKey,
+  LIVE_WIND_BASE_URL, LIVE_WIND_CUSTOMER_BASE_URL, LIVE_WIND_STATION_ID, _cache: cache,
 };

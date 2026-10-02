@@ -42,6 +42,17 @@ VERIFIED, not assumed:
   km/h-vs-m/s conversion-bug class met/ingest_real_met.py's docstring
   warns about for Meteostat's raw km/h fields.
 
+API KEY (optional, server-side only): with OPEN_METEO_API_KEY set in the
+environment, requests go to Open-Meteo's commercial endpoint
+(customer-api.open-meteo.com) with the key as the `apikey` query param --
+the only way Open-Meteo accepts it. Unset or blank, the free endpoint above,
+exactly as before. The free tier is rate-limited per IP and Render's shared
+outbound IP hit that for real (provider_http_429). Because the key rides in
+the request URL, nothing here logs, raises or returns that URL: failures are
+the fixed reason codes below (exception CLASS names only -- a requests
+exception's message quotes the full URL). Don't enable urllib3 DEBUG logging
+in production for the same reason: it prints request URLs verbatim.
+
 NOT solved by this module: a wind SENSOR directly on the ESP32 (the
 alternative considered) -- checked firmware/AQMS_Firmware.ino and
 firmware/config.h, confirmed no anemometer hardware exists on the device
@@ -49,6 +60,8 @@ today. That would be a real hardware addition, out of scope here.
 """
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -57,6 +70,15 @@ import requests
 from met.weather_station import StationObservation
 
 LIVE_WIND_BASE_URL = "https://api.open-meteo.com/v1/forecast"
+LIVE_WIND_CUSTOMER_BASE_URL = "https://customer-api.open-meteo.com/v1/forecast"
+
+
+def open_meteo_api_key(env: Mapping[str, str] | None = None) -> str | None:
+    """OPEN_METEO_API_KEY from the environment, or None if unset/blank.
+    Read per call, so setting the env var needs no code change."""
+    key = (os.environ if env is None else env).get("OPEN_METEO_API_KEY", "")
+    key = key.strip() if isinstance(key, str) else ""
+    return key or None
 LIVE_WIND_STATION_ID = "open-meteo-live-nowcast"
 
 
@@ -86,6 +108,7 @@ def fetch_live_wind_series_detailed(
     lon: float,
     hours_back: float = 1.0,
     timeout: float = 10.0,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[list[tuple[datetime, StationObservation]], str | None]:
     """Same as fetch_live_wind_series(), but returns (series, reason).
 
@@ -100,8 +123,10 @@ def fetch_live_wind_series_detailed(
       payload_missing_fields  JSON without the current/hourly fields used here
       no_valid_rows_in_window provider answered, but no finite, complete
                               hourly row falls inside the requested window
-    Never a secret, never a raw provider body.
+    Never a secret, never a raw provider body. `env` overrides os.environ
+    for the OPEN_METEO_API_KEY lookup (tests); None reads the real one.
     """
+    key = open_meteo_api_key(env)
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -112,8 +137,11 @@ def fetch_live_wind_series_detailed(
         "past_days": 2,
         "forecast_days": 1,
     }
+    if key:
+        params["apikey"] = key
+    url = LIVE_WIND_CUSTOMER_BASE_URL if key else LIVE_WIND_BASE_URL
     try:
-        resp = requests.get(LIVE_WIND_BASE_URL, params=params, timeout=timeout)
+        resp = requests.get(url, params=params, timeout=timeout)
     except requests.Timeout:
         return [], "timeout"
     except requests.RequestException as exc:

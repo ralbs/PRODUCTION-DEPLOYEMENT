@@ -1,6 +1,6 @@
 const express = require("express");
 const request = require("supertest");
-const { fetchLiveWind, fetchLiveWindDetailed, buildUrl, _cache } = require("../lib/liveWind");
+const { fetchLiveWind, fetchLiveWindDetailed, buildUrl, apiKey, _cache } = require("../lib/liveWind");
 // Loaded at module scope (it pulls in Mongoose): requiring it inside a test
 // put a cold module load inside that test's 5s timeout.
 const SourceDirection = require("../models/SourceDirection");
@@ -18,15 +18,15 @@ beforeEach(() => _cache.clear());
 
 describe("fetchLiveWind (port of ctm-core/met/live_wind.py)", () => {
   test("parses the real response shape; FROM-direction passed through unconverted", async () => {
-    const w = await fetchLiveWind(14.442, 79.986, { fetchImpl: okFetch(REAL_PAYLOAD) });
+    const w = await fetchLiveWind(14.442, 79.986, { fetchImpl: okFetch(REAL_PAYLOAD), env: {} });
     expect(w).toEqual({
       speed_m_s: 4.63, dir_from_deg: 298, as_of: "2026-09-26T09:15:00.000Z",
-      grid_lat: 14.446397, grid_lon: 79.99074,
+      grid_lat: 14.446397, grid_lon: 79.99074, endpoint: "free",
     });
   });
 
   test("requests m/s and UTC explicitly, same params live_wind.py verified", () => {
-    const u = new URL(buildUrl(14.442, 79.986));
+    const u = new URL(buildUrl(14.442, 79.986, null));
     expect(u.origin + u.pathname).toBe("https://api.open-meteo.com/v1/forecast");
     expect(u.searchParams.get("wind_speed_unit")).toBe("ms");
     expect(u.searchParams.get("timezone")).toBe("UTC");
@@ -158,5 +158,70 @@ describe("fetchLiveWindDetailed -- failure reasons", () => {
     const v = await fetchLiveWind(14.442, 79.986, { fetchImpl: okFetch(REAL_PAYLOAD) });
     expect(d.reason).toBeNull();
     expect(d.value).toEqual(v);
+  });
+});
+
+describe("OPEN_METEO_API_KEY (optional, server-side only)", () => {
+  const KEY = "test-secret-key-9f3a";
+  beforeEach(() => _cache.clear());
+
+  test("unset or blank -> free endpoint, no apikey param (behaviour unchanged)", () => {
+    for (const env of [{}, { OPEN_METEO_API_KEY: "" }, { OPEN_METEO_API_KEY: "   " }]) {
+      expect(apiKey(env)).toBeNull();
+      const u = new URL(buildUrl(14.442, 79.986, apiKey(env)));
+      expect(u.origin + u.pathname).toBe("https://api.open-meteo.com/v1/forecast");
+      expect(u.searchParams.has("apikey")).toBe(false);
+    }
+  });
+
+  test("set -> commercial endpoint with the key as apikey, other params unchanged", async () => {
+    const fetchImpl = okFetch(REAL_PAYLOAD);
+    const { value } = await fetchLiveWindDetailed(14.442, 79.986, { fetchImpl, env: { OPEN_METEO_API_KEY: ` ${KEY} ` } });
+    const u = new URL(fetchImpl.mock.calls[0][0]);
+    expect(u.origin + u.pathname).toBe("https://customer-api.open-meteo.com/v1/forecast");
+    expect(u.searchParams.get("apikey")).toBe(KEY);
+    expect(u.searchParams.get("wind_speed_unit")).toBe("ms");
+    expect(value.endpoint).toBe("customer");
+    expect(JSON.stringify(value)).not.toContain(KEY);
+  });
+
+  test("the key never reaches a response body, reason code or log line -- success or any failure", async () => {
+    const app = express();
+    app.use("/api/wind", require("../routes/wind"));
+    const realFetch = global.fetch;
+    const prev = process.env.OPEN_METEO_API_KEY;
+    process.env.OPEN_METEO_API_KEY = KEY;
+    const logged = [];
+    const spies = ["log", "warn", "error"].map((m) => jest.spyOn(console, m).mockImplementation((...a) => logged.push(a.map(String).join(" "))));
+    const urlError = new TypeError(`fetch failed for ${buildUrl(14.442, 79.986, KEY)}`);
+    try {
+      for (const impl of [
+        okFetch(REAL_PAYLOAD),
+        async () => ({ ok: false, status: 401 }),
+        async () => ({ ok: false, status: 429 }),
+        async () => { throw urlError; },                 // error text quoting the keyed URL
+      ]) {
+        _cache.clear();
+        global.fetch = impl;
+        const res = await request(app).get("/api/wind?lat=14.442&lon=79.986");
+        expect(JSON.stringify(res.body)).not.toContain(KEY);
+        if (res.status === 200) expect(res.body.meta.provider_endpoint).toBe("customer");
+      }
+      // An unexpected throw past fetchLiveWindDetailed's own handling: the
+      // route's catch must not echo the message either.
+      jest.resetModules();
+      jest.doMock("../lib/liveWind", () => ({ ...jest.requireActual("../lib/liveWind"), fetchLiveWindDetailed: async () => { throw urlError; } }));
+      const app2 = express(); app2.use("/api/wind", require("../routes/wind"));
+      const res2 = await request(app2).get("/api/wind?lat=14.442&lon=79.986");
+      expect(res2.status).toBe(503);
+      expect(JSON.stringify(res2.body)).not.toContain(KEY);
+      expect(logged.length).toBeGreaterThan(0);
+      for (const line of logged) expect(line).not.toContain(KEY);
+    } finally {
+      jest.dontMock("../lib/liveWind");
+      spies.forEach((s) => s.mockRestore());
+      global.fetch = realFetch;
+      if (prev === undefined) delete process.env.OPEN_METEO_API_KEY; else process.env.OPEN_METEO_API_KEY = prev;
+    }
   });
 });

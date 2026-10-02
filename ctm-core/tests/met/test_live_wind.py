@@ -140,3 +140,61 @@ def test_detailed_success_has_no_reason_and_matches_the_plain_function():
         plain = fetch_live_wind_series(14.442, 79.986)
     assert reason is None
     assert series and series == plain
+
+
+# ── OPEN_METEO_API_KEY (optional, server-side only) ──────────────────────
+from met.live_wind import LIVE_WIND_CUSTOMER_BASE_URL, open_meteo_api_key  # noqa: E402
+
+_KEY = "test-secret-key-9f3a"
+
+
+@pytest.mark.parametrize("env", [{}, {"OPEN_METEO_API_KEY": ""}, {"OPEN_METEO_API_KEY": "   "}])
+def test_no_key_uses_free_endpoint_without_apikey(env):
+    assert open_meteo_api_key(env) is None
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_BASE_URL, json=REAL_SHAPE_RESPONSE)
+        series, reason = fetch_live_wind_series_detailed(14.442, 79.986, hours_back=3.0, env=env)
+        assert reason is None and series
+        req = m.request_history[0]
+        assert req.url.startswith(LIVE_WIND_BASE_URL)
+        assert "apikey" not in req.qs
+
+
+def test_key_uses_customer_endpoint_with_apikey_param():
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_CUSTOMER_BASE_URL, json=REAL_SHAPE_RESPONSE)
+        series, reason = fetch_live_wind_series_detailed(
+            14.442, 79.986, hours_back=3.0, env={"OPEN_METEO_API_KEY": f" {_KEY} "})
+        assert reason is None and series
+        req = m.request_history[0]
+        assert req.url.startswith(LIVE_WIND_CUSTOMER_BASE_URL)
+        assert req.qs["apikey"] == [_KEY.lower()]  # requests_mock lower-cases qs values
+        assert req.qs["wind_speed_unit"] == ["ms"]
+
+
+def test_key_read_from_real_environment(monkeypatch):
+    monkeypatch.setenv("OPEN_METEO_API_KEY", _KEY)
+    assert open_meteo_api_key() == _KEY
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_CUSTOMER_BASE_URL, json=REAL_SHAPE_RESPONSE)
+        _, reason = fetch_live_wind_series_detailed(14.442, 79.986, hours_back=3.0)
+        assert reason is None
+
+
+@pytest.mark.parametrize("exc", [requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout])
+def test_key_never_in_failure_reason_even_when_exception_quotes_the_url(exc):
+    keyed_url = f"{LIVE_WIND_CUSTOMER_BASE_URL}?apikey={_KEY}"
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_CUSTOMER_BASE_URL, exc=exc(f"Max retries exceeded with url: {keyed_url}"))
+        series, reason = fetch_live_wind_series_detailed(
+            14.442, 79.986, env={"OPEN_METEO_API_KEY": _KEY})
+    assert series == []
+    assert _KEY not in reason
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_key_never_in_http_failure_reason(status):
+    with rm_module.Mocker() as m:
+        m.get(LIVE_WIND_CUSTOMER_BASE_URL, status_code=status, json={"error": True, "reason": f"bad key {_KEY}"})
+        _, reason = fetch_live_wind_series_detailed(14.442, 79.986, env={"OPEN_METEO_API_KEY": _KEY})
+    assert reason == f"provider_http_{status}"

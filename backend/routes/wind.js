@@ -50,10 +50,15 @@ async function handler(req, res) {
         grid_lat: wind.grid_lat,
         grid_lon: wind.grid_lon,
         direction_convention: "meteorological FROM-direction (degrees, 0 = from north)",
+        // "customer" once OPEN_METEO_API_KEY is set server-side, else "free".
+        // Which endpoint served it -- never the key itself.
+        provider_endpoint: wind.endpoint,
       },
     });
   } catch (err) {
-    console.error("[wind] live lookup failed:", err.message);
+    // Name only: an unexpected error's message could quote the request URL,
+    // which carries OPEN_METEO_API_KEY when one is set.
+    console.error("[wind] live lookup failed:", err?.name || "Error");
     res.status(503).json({ error: "Live wind unavailable", status: "unavailable" });
   }
 }

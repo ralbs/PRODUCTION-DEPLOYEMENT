@@ -38,6 +38,10 @@ services:
         sync: false
       - key: MQTT_PASSWORD
         sync: false
+      - key: OPEN_METEO_API_KEY
+        sync: false        # optional: Open-Meteo commercial key for GET /api/wind
+                            # (backend/lib/liveWind.js). Unset -> free endpoint,
+                            # which Render's shared IP has hit rate limits on (429).
 
   # Real recurring scheduled run of scripts/source_direction_worker.py --
   # NOT a manual/ad-hoc invocation. Runs with no --as-of, so it always takes
@@ -77,3 +81,6 @@ services:
                             # web service's own DEVICE_KEYS -- same device_id
                             # authenticateDevice expects (backend/middleware/auth.js),
                             # the worker's own --device-id default
+      - key: OPEN_METEO_API_KEY
+        sync: false        # optional, same key as the web service: live wind for
+                            # met/live_wind.py. Unset -> free endpoint (429-prone).
