@@ -293,6 +293,12 @@ body {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
   background: linear-gradient(90deg, transparent, var(--border-hi), transparent);
 }
+/* Edge-to-edge body (map, plume split): the card drops its own padding, so
+   the header carries it instead -- otherwise the title sits flush on the
+   card border. Was an inline style={{ padding: 0 }} that took the header's
+   inset with it. */
+.card.card-flush { padding: 0; }
+.card-flush > .card-header { padding: 20px 22px 0; }
 .card-header {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   gap: 8px; margin-bottom: 16px; min-width: 0;
@@ -553,6 +559,21 @@ body {
 .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .plume-canvas { border-radius: 10px; display: block; max-width: 100%; }
+/* Pollution Dispersion card: explanation beside the plume. Classes, not
+   inline styles, so the phone rule can stack them -- inline "1fr 1fr" left
+   each column ~150px at 390px and wrapped the NO LIVE WIND pill to 3 lines. */
+.plume-split { display: grid; grid-template-columns: 1fr 1fr; min-height: 380px; }
+.plume-split > * { min-width: 0; }
+.plume-split-explain { padding: 22px 24px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px; }
+.plume-params { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.plume-params > * { min-width: 0; }
+@media (max-width: 600px) {
+  .plume-split { grid-template-columns: 1fr; min-height: 0; }
+  .plume-split-explain { padding: 18px 16px; border-right: none; border-bottom: 1px solid var(--border); }
+  /* Wind value + its confidence pill + staleness line need the full row:
+     a half-width cell wrapped "MODEL NOWCAST WIND" onto two lines. */
+  .plume-param-wind { grid-column: 1 / -1; }
+}
 .plume-empty {
   display: flex; align-items: center; justify-content: center;
   height: 280px; border: 1px dashed rgba(0,229,160,0.15); border-radius: 10px;
@@ -679,6 +700,8 @@ body {
 @media (max-width: 768px) {
   .hero { padding: 36px 20px 32px; }
   .content-grid, .charts-band, .station-table-wrap { padding: 0 16px; }
+  /* Health Intelligence + Pollution Dispersion: same 16px gutter as the rest. */
+  .section-pad { padding-left: 16px; padding-right: 16px; }
   .plume-band { width: calc(100% - 32px); grid-template-columns: 1fr; }
   .plume-form-section { border-right: none; border-bottom: 1px solid var(--border); }
   .aqi-legend-bar { grid-template-columns: repeat(2, 1fr); }

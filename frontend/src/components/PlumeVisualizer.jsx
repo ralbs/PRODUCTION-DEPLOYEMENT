@@ -114,12 +114,9 @@ export default function PlumeVisualizer({ latest, wind = { status: "loading", da
   const pm25 = latest?.pollutants?.pm2_5;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, minHeight: 380 }}>
+    <div className="plume-split">
       {/* ── Left: Explanation + Parameters ── */}
-      <div style={{
-        padding: "22px 24px", borderRight: "1px solid var(--border)",
-        display: "flex", flexDirection: "column", gap: 14,
-      }}>
+      <div className="plume-split-explain">
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>
             How Pollution Spreads in the Air
@@ -143,8 +140,9 @@ export default function PlumeVisualizer({ latest, wind = { status: "loading", da
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--accent)", marginBottom: 8 }}>
             {caption}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div className="plume-params">
             <ParamItem
+              className="plume-param-wind"
               label="Wind"
               value={windOk
                 ? `${wind.data.speed_m_s} m/s from ${compassPoint(wind.data.dir_from_deg)}`
@@ -286,9 +284,9 @@ function selectedStationLabel(latest) {
   return id ? id.replace("KSPCB-", "") : "the station";
 }
 
-function ParamItem({ label, value, sub }) {
+function ParamItem({ label, value, sub, className }) {
   return (
-    <div>
+    <div className={className}>
       <div style={{ fontSize: 9, fontWeight: 600, color: "var(--text-dim)", letterSpacing: "0.5px" }}>{label}</div>
       <div style={{ fontSize: 13, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--text)" }}>{value}</div>
       <div style={{ fontSize: 9, color: "var(--text-dim)" }}>{sub}</div>

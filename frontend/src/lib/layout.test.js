@@ -55,3 +55,32 @@ test("Health card grids are classes (overridable) and stack below 600px (reading
   assert.match(narrow, /\.health-pollutant-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)\s*;/, "reading tiles must be two columns below 600px");
   assert.match(narrow, /\.health-hero-banner\s*\{[^}]*flex-direction:\s*column/, "risk banner must stack");
 });
+
+const plume = fs.readFileSync(path.join(SRC, "components", "PlumeVisualizer.jsx"), "utf8");
+
+test("Pollution Dispersion card grids are classes and stack below 600px", () => {
+  assert.ok(!/gridTemplateColumns/.test(plume), "no inline grid columns: a media query can't override them");
+  for (const c of ["plume-split", "plume-split-explain", "plume-params"]) assert.match(plume, new RegExp(`className="${c}"`));
+  const narrow = [...css.matchAll(/@media\s*\(max-width:\s*600px\)\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
+  assert.match(narrow, /\.plume-split\s*\{[^}]*grid-template-columns:\s*1fr\s*;/);
+  assert.match(narrow, /\.plume-split-explain\s*\{[^}]*border-right:\s*none/);
+  // Wind value + confidence pill get the full row; half a column wrapped the pill.
+  assert.match(plume, /className="plume-param-wind"/);
+  assert.match(narrow, /\.plume-param-wind\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+});
+
+test("edge-to-edge cards keep their header inset", () => {
+  // style={{ padding: 0 }} on a FullscreenCard took the header's padding
+  // with it: title flush on the card border. .card-flush pads the header.
+  assert.ok(!/<FullscreenCard[^>]*style=\{\{\s*padding:\s*0\s*\}\}/.test(app), "use className=\"card-flush\", not an inline padding: 0");
+  assert.match(css, /\.card-flush\s*>\s*\.card-header\s*\{[^}]*padding:\s*20px 22px 0/);
+});
+
+test("every full-width section uses the same 16px phone gutter", () => {
+  // Health Intelligence and Pollution Dispersion wrappers are .section-pad,
+  // not an inline 28px that the phone rule can't reach.
+  assert.ok(!/padding:\s*"0 28px/.test(app), "no inline 28px section padding");
+  const m768 = css.match(/@media\s*\(max-width:\s*768px\)\s*\{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(m768, /\.section-pad\s*\{[^}]*padding-left:\s*16px;\s*padding-right:\s*16px/);
+  assert.match(m768, /\.content-grid,\s*\.charts-band,\s*\.station-table-wrap\s*\{\s*padding:\s*0 16px/);
+});

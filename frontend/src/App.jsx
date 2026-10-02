@@ -326,7 +326,7 @@ export default function App() {
       <div ref={mainRef} className="content-grid">
         <div className="left-col">
           <FullscreenCard title="Station Map" icon={<MapIcon />}
-            meta={`${stations.length} stations`} style={{ padding: 0 }} bodyStyle={{ height: 340 }}>
+            meta={`${stations.length} stations`} className="card-flush" bodyStyle={{ height: 340 }}>
             <MapPanel stations={stations} stationsAQI={stationsAQI} selectedStation={selected} onSelect={setSelected}
               sourceDirection={sourceDirection.status === "ok" ? sourceDirection.doc : null}
               plumeResult={plumeResult} />
@@ -386,9 +386,9 @@ export default function App() {
       </div>
 
       {/* Pollution Spread */}
-      <div style={{ padding: "0 28px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+      <div className="section-pad" style={{ paddingBottom: 32 }}>
         <FullscreenCard title="Pollution Dispersion" icon={<PlumeIcon />}
-          meta={plumeCaption} style={{ padding: 0 }} bodyStyle={{ padding: 0 }}>
+          meta={plumeCaption} className="card-flush" bodyStyle={{ padding: 0 }}>
           <PlumeVisualizer latest={latest} wind={liveWind} caption={plumeCaption} onResult={setPlumeResult} />
         </FullscreenCard>
       </div>
